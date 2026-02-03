@@ -54,5 +54,8 @@ function render() {
 
 function persist() {
   saveLocalData(db);
+  saveToDrive(db);
   render();
 }
+
+ 
