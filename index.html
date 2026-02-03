@@ -1,57 +1,64 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
-  <meta charset="UTF-8" />
-  <title>Controle Financeiro</title>
-  <link rel="stylesheet" href="css/style.css" />
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <meta charset="UTF-8" />
+    <title>Controle Financeiro</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
+
 <body>
-  <header class="topbar">
-    <h1>Finance</h1>
-    <button id="login" class="btn primary">Entrar</button>
-  </header>
+    <div id="login-screen" class="login-screen">
+        <div class="login-card">
+            <h1>💸 Finance</h1>
+            <p>Controle financeiro simples e inteligente</p>
+            <button id="login" class="btn primary full">
+                Entrar com Google
+            </button>
+        </div>
+    </div>
 
-  <main id="app" class="hidden container">
+    <main id="app" class="hidden container">
 
-    <section class="month-bar">
-      <input type="month" id="monthSelector" />
-    </section>
+        <section class="month-bar">
+            <input type="month" id="monthSelector" />
+        </section>
 
-    <section class="summary">
-      <div class="summary-card income">
-        <span>Rendas</span>
-        <strong>R$ <span id="totalIncome">0,00</span></strong>
-      </div>
+        <section class="summary">
+            <div class="summary-card income">
+                <span>Rendas</span>
+                <strong>R$ <span id="totalIncome">0,00</span></strong>
+            </div>
 
-      <div class="summary-card expense">
-        <span>Contas</span>
-        <strong>R$ <span id="totalExpense">0,00</span></strong>
-      </div>
+            <div class="summary-card expense">
+                <span>Contas</span>
+                <strong>R$ <span id="totalExpense">0,00</span></strong>
+            </div>
 
-      <div class="summary-card balance">
-        <span>Saldo</span>
-        <strong>R$ <span id="balance">0,00</span></strong>
-      </div>
-    </section>
+            <div class="summary-card balance">
+                <span>Saldo</span>
+                <strong>R$ <span id="balance">0,00</span></strong>
+            </div>
+        </section>
 
-    <section class="actions">
-      <button onclick="addIncome()" class="btn success">+ Renda</button>
-      <button onclick="addExpense()" class="btn danger">+ Conta</button>
-    </section>
+        <section class="actions">
+            <button onclick="addIncome()" class="btn success">+ Renda</button>
+            <button onclick="addExpense()" class="btn danger">+ Conta</button>
+        </section>
 
-    <section class="list">
-      <h2>Lançamentos</h2>
-      <ul id="entries"></ul>
-    </section>
+        <section class="list">
+            <h2>Lançamentos</h2>
+            <ul id="entries"></ul>
+        </section>
 
-  </main>
+    </main>
 
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="js/auth.js"></script>
-  <script src="js/storage.js"></script>
-  <script src="js/drive.js"></script>
-  <script src="js/app.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="js/auth.js"></script>
+    <script src="js/storage.js"></script>
+    <script src="js/drive.js"></script>
+    <script src="js/app.js"></script>
 </body>
 
 </html>

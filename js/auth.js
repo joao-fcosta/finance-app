@@ -8,7 +8,7 @@ document.getElementById("login").onclick = () => {
     scope: SCOPES,
     callback: async token => {
       accessToken = token.access_token;
-      document.getElementById("login").style.display = "none";
+      document.getElementById("login-screen").style.display = "none";
       document.getElementById("app").classList.remove("hidden");
       await initApp();
     }

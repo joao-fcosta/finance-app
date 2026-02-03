@@ -31,22 +31,133 @@ function changeMonth(month) {
 }
 
 function addIncome() {
-  const value = Number(prompt("Valor da renda:"));
-  db.months[currentMonth].incomes.push({ value });
+  const name = prompt("Nome da renda:");
+  if (!name) return alert("Nome é obrigatório");
+
+  const value = Number(prompt("Valor:"));
+  const fixed = confirm("É renda fixa?");
+
+  db.months[currentMonth].incomes.push({
+    id: crypto.randomUUID(),
+    name,
+    value,
+    type: fixed ? "fixed" : "single"
+  });
+
+  if (fixed) replicateIncome(name, value);
   persist();
 }
 
+
 function addExpense() {
-  const value = Number(prompt("Valor da conta:"));
-  const fixed = confirm("É conta fixa?");
-  db.months[currentMonth].expenses.push({ value, fixed });
+  const name = prompt("Nome da despesa:");
+  if (!name) return alert("Nome é obrigatório");
+
+  const value = Number(prompt("Valor:"));
+  const fixed = confirm("É despesa fixa?");
+
+  let expense = {
+    id: crypto.randomUUID(),
+    name,
+    value,
+    type: fixed ? "fixed" : "variable"
+  };
+
+  if (!fixed) {
+    const parcelado = confirm("É parcelado?");
+    if (parcelado) {
+      const total = Number(prompt("Quantidade de parcelas:"));
+      expense.installment = { current: 1, total };
+      replicateInstallment(expense);
+    }
+  }
+
+  db.months[currentMonth].expenses.push(expense);
+
+  if (fixed) replicateExpense(name, value);
   persist();
+}
+
+function nextMonths(startMonth) {
+  const [y, m] = startMonth.split("-").map(Number);
+  let months = [];
+  for (let i = m + 1; i <= 12; i++) {
+    months.push(`${y}-${String(i).padStart(2, "0")}`);
+  }
+  return months;
+}
+
+function replicateIncome(name, value) {
+  nextMonths(currentMonth).forEach(month => {
+    if (!db.months[month]) {
+      db.months[month] = { incomes: [], expenses: [] };
+    }
+
+    db.months[month].incomes.push({
+      id: crypto.randomUUID(),
+      name,
+      value,
+      type: "fixed"
+    });
+  });
+}
+
+function replicateExpense(name, value) {
+  nextMonths(currentMonth).forEach(month => {
+    if (!db.months[month]) {
+      db.months[month] = { incomes: [], expenses: [] };
+    }
+
+    db.months[month].expenses.push({
+      id: crypto.randomUUID(),
+      name,
+      value,
+      type: "fixed"
+    });
+  });
+}
+
+function replicateInstallment(expense) {
+  let count = expense.installment.total;
+  let months = nextMonths(currentMonth);
+
+  months.slice(0, count - 1).forEach((month, i) => {
+    if (!db.months[month]) {
+      db.months[month] = { incomes: [], expenses: [] };
+    }
+
+    db.months[month].expenses.push({
+      ...expense,
+      id: crypto.randomUUID(),
+      installment: {
+        current: i + 2,
+        total: expense.installment.total
+      }
+    });
+  });
 }
 
 function render() {
   const month = db.months[currentMonth];
-  const income = month.incomes.reduce((a, b) => a + b.value, 0);
-  const expense = month.expenses.reduce((a, b) => a + b.value, 0);
+  const income = month.incomes.forEach(i => {
+    list.innerHTML += `
+    <li>
+      <span>${i.name} ${i.type === "fixed" ? "(Fixa)" : ""}</span>
+      <strong style="color:#16a34a">+ R$ ${i.value.toFixed(2)}</strong>
+    </li>`;
+  });
+  const expense = month.expenses.forEach(e => {
+    list.innerHTML += `
+    <li>
+      <span>
+        ${e.name}
+        ${e.type === "fixed" ? "(Fixa)" : ""}
+        ${e.installment ? `(${e.installment.current}/${e.installment.total})` : ""}
+      </span>
+      <strong style="color:#dc2626">- R$ ${e.value.toFixed(2)}</strong>
+    </li>`;
+  });
+
 
   document.getElementById("totalIncome").innerText = income.toFixed(2);
   document.getElementById("totalExpense").innerText = expense.toFixed(2);
