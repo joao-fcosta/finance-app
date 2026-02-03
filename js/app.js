@@ -158,13 +158,13 @@ function render() {
     </li>`;
   });
 
-
+  const list = document.getElementById("entries");
+  list.innerHTML = "";
   document.getElementById("totalIncome").innerText = income.toFixed(2);
   document.getElementById("totalExpense").innerText = expense.toFixed(2);
   document.getElementById("balance").innerText = (income - expense).toFixed(2);
 
-  const list = document.getElementById("entries");
-  list.innerHTML = "";
+  
 
   month.incomes.forEach(i => {
     list.innerHTML += `
