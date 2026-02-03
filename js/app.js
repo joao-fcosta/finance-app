@@ -1,7 +1,21 @@
-let db = loadLocalData();
+let db = null;
 let currentMonth = null;
 
-function initApp() {
+async function initApp() {
+  // tenta carregar do Drive
+  const driveData = await loadFromDrive();
+
+  if (driveData) {
+    db = driveData;
+    console.log("✔ Dados carregados do Drive");
+  } else {
+    db = loadLocalData() || defaultData();
+    console.log("✔ Nenhum arquivo no Drive, usando dados locais");
+    await saveToDrive(db);
+  }
+
+  saveLocalData(db);
+
   const input = document.getElementById("monthSelector");
   input.value = new Date().toISOString().slice(0, 7);
   changeMonth(input.value);
@@ -11,10 +25,7 @@ function initApp() {
 function changeMonth(month) {
   currentMonth = month;
   if (!db.months[month]) {
-    db.months[month] = {
-      incomes: [],
-      expenses: []
-    };
+    db.months[month] = { incomes: [], expenses: [] };
   }
   render();
 }
@@ -40,16 +51,6 @@ function render() {
   document.getElementById("totalIncome").innerText = income.toFixed(2);
   document.getElementById("totalExpense").innerText = expense.toFixed(2);
   document.getElementById("balance").innerText = (income - expense).toFixed(2);
-
-  const list = document.getElementById("entries");
-  list.innerHTML = "";
-
-  month.incomes.forEach(i =>
-    list.innerHTML += `<li>Renda: R$ ${i.value}</li>`
-  );
-  month.expenses.forEach(e =>
-    list.innerHTML += `<li>Conta: R$ ${e.value} ${e.fixed ? "(Fixa)" : ""}</li>`
-  );
 }
 
 function persist() {
@@ -57,5 +58,3 @@ function persist() {
   saveToDrive(db);
   render();
 }
-
- 

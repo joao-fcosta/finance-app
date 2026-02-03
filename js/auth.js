@@ -6,11 +6,11 @@ document.getElementById("login").onclick = () => {
   const client = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
-    callback: token => {
+    callback: async token => {
       accessToken = token.access_token;
       document.getElementById("login").style.display = "none";
       document.getElementById("app").classList.remove("hidden");
-      initApp();
+      await initApp();
     }
   });
   client.requestAccessToken();

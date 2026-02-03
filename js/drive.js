@@ -11,17 +11,26 @@ async function findFile() {
       }
     }
   );
-
   const data = await res.json();
   return data.files?.[0] || null;
 }
 
-// cria o arquivo se não existir
-async function createFile() {
+// cria o arquivo inicial
+async function createFile(initialContent) {
   const metadata = {
     name: "finance.json",
     mimeType: "application/json"
   };
+
+  const boundary = "foo_bar_baz";
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    JSON.stringify(metadata) +
+    `\r\n--${boundary}\r\n` +
+    `Content-Type: application/json\r\n\r\n` +
+    JSON.stringify(initialContent) +
+    `\r\n--${boundary}--`;
 
   const res = await fetch(
     "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
@@ -29,20 +38,41 @@ async function createFile() {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
+        "Content-Type": `multipart/related; boundary=${boundary}`
       },
-      body: JSON.stringify(metadata)
+      body
     }
   );
 
   return await res.json();
 }
 
-// salva conteúdo no arquivo
+// carrega o conteúdo do arquivo
+async function loadFromDrive() {
+  const file = await findFile();
+  if (!file) return null;
+
+  fileId = file.id;
+
+  const res = await fetch(
+    `${DRIVE_API}/files/${fileId}?alt=media`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  );
+
+  return await res.json();
+}
+
+// salva conteúdo no Drive
 async function saveToDrive(content) {
   if (!fileId) {
-    const file = await findFile() || await createFile();
-    fileId = file.id;
+    const created = await createFile(content);
+    fileId = created.id;
+    console.log("✔ Arquivo criado no Drive");
+    return;
   }
 
   await fetch(
@@ -57,5 +87,5 @@ async function saveToDrive(content) {
     }
   );
 
-  console.log("✔ Salvo no Google Drive");
+  console.log("✔ Atualizado no Google Drive");
 }
