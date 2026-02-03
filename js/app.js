@@ -51,6 +51,25 @@ function render() {
   document.getElementById("totalIncome").innerText = income.toFixed(2);
   document.getElementById("totalExpense").innerText = expense.toFixed(2);
   document.getElementById("balance").innerText = (income - expense).toFixed(2);
+
+  const list = document.getElementById("entries");
+  list.innerHTML = "";
+
+  month.incomes.forEach(i => {
+    list.innerHTML += `
+      <li>
+        <span>Renda</span>
+        <strong style="color:#16a34a">+ R$ ${i.value.toFixed(2)}</strong>
+      </li>`;
+  });
+
+  month.expenses.forEach(e => {
+    list.innerHTML += `
+      <li>
+        <span>Conta ${e.fixed ? "(Fixa)" : ""}</span>
+        <strong style="color:#dc2626">- R$ ${e.value.toFixed(2)}</strong>
+      </li>`;
+  });
 }
 
 function persist() {

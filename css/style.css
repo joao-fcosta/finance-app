@@ -1,40 +1,128 @@
-body {
-  font-family: Arial, sans-serif;
-  background: #f4f4f4;
-  margin: 0;
+* {
+  box-sizing: border-box;
+  font-family: 'Inter', system-ui, sans-serif;
 }
 
-header {
-  background: #222;
+body {
+  margin: 0;
+  background: #f2f4f8;
+  color: #111;
+}
+
+.hidden {
+  display: none;
+}
+
+/* Topbar */
+.topbar {
+  background: #111827;
   color: #fff;
   padding: 1rem;
   display: flex;
   justify-content: space-between;
+  align-items: center;
 }
 
-.hidden { display: none; }
-
-main { padding: 1rem; }
-
-.cards {
-  display: flex;
-  gap: 1rem;
+.topbar h1 {
+  margin: 0;
+  font-size: 1.2rem;
 }
 
-.card {
-  background: white;
+/* Layout */
+.container {
   padding: 1rem;
-  border-radius: 8px;
-  flex: 1;
-  text-align: center;
-  font-weight: bold;
+  max-width: 900px;
+  margin: auto;
 }
 
-ul { list-style: none; padding: 0; }
+/* Month selector */
+.month-bar {
+  margin-bottom: 1rem;
+}
+
+.month-bar input {
+  width: 100%;
+  padding: .7rem;
+  border-radius: 8px;
+  border: none;
+  font-size: 1rem;
+}
+
+/* Summary cards */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.summary-card {
+  background: #fff;
+  padding: 1rem;
+  border-radius: 14px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.06);
+}
+
+.summary-card span {
+  font-size: .85rem;
+  color: #6b7280;
+}
+
+.summary-card strong {
+  font-size: 1.4rem;
+}
+
+.income strong { color: #16a34a; }
+.expense strong { color: #dc2626; }
+.balance strong { color: #2563eb; }
+
+/* Actions */
+.actions {
+  display: flex;
+  gap: .5rem;
+  margin-bottom: 1.5rem;
+}
+
+.btn {
+  flex: 1;
+  padding: .8rem;
+  border-radius: 10px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary {
+  background: #2563eb;
+  color: white;
+}
+
+.success {
+  background: #16a34a;
+  color: white;
+}
+
+.danger {
+  background: #dc2626;
+  color: white;
+}
+
+/* List */
+.list h2 {
+  margin-bottom: .5rem;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+}
 
 li {
   background: #fff;
-  margin: .5rem 0;
-  padding: .5rem;
-  border-radius: 6px;
+  padding: .8rem;
+  border-radius: 10px;
+  margin-bottom: .5rem;
+  display: flex;
+  justify-content: space-between;
+  box-shadow: 0 4px 10px rgba(0,0,0,.04);
 }
