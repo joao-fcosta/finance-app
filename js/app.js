@@ -140,17 +140,19 @@ function replicateInstallment(expense) {
 function render() {
   const month = db.months[currentMonth];
 
-  const list = document.getElementById("entries");
-  list.innerHTML = "";
+  const incomeList = document.getElementById("incomeList");
+  const expenseList = document.getElementById("expenseList");
+
+  incomeList.innerHTML = "";
+  expenseList.innerHTML = "";
 
   let totalIncome = 0;
   let totalExpense = 0;
 
-  // RENDAS
-  month.incomes.forEach(i => {
+  month.incomes.forEach((i, index) => {
     totalIncome += i.value;
 
-    list.innerHTML += `
+    incomeList.innerHTML += `
       <li>
         <span>
           ${i.name}
@@ -163,11 +165,10 @@ function render() {
     `;
   });
 
-  // DESPESAS
-  month.expenses.forEach(e => {
+  month.expenses.forEach((e, index) => {
     totalExpense += e.value;
 
-    list.innerHTML += `
+    expenseList.innerHTML += `
       <li>
         <span>
           ${e.name}
@@ -190,6 +191,7 @@ function render() {
   document.getElementById("balance").innerText =
     (totalIncome - totalExpense).toFixed(2);
 }
+
 
 
 function persist() {

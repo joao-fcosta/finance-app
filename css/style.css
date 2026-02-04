@@ -157,3 +157,13 @@ li {
 .full {
   width: 100%;
 }
+ 
+.list-group {
+  margin-bottom: 1.5rem;
+}
+
+.list-group h2 {
+  font-size: 1.1rem;
+  margin-bottom: .5rem;
+  color: #374151;
+}
