@@ -137,6 +137,52 @@ function replicateInstallment(expense) {
   });
 }
 
+function deleteIncome(id) {
+  const month = db.months[currentMonth];
+  month.incomes = month.incomes.filter(i => i.id !== id);
+  saveToDrive();
+  render();
+}
+
+function deleteExpense(id) {
+  const month = db.months[currentMonth];
+  month.expenses = month.expenses.filter(e => e.id !== id);
+  saveToDrive();
+  render();
+}
+
+function editIncome(id) {
+  const month = db.months[currentMonth];
+  const income = month.incomes.find(i => i.id === id);
+
+  const name = prompt("Nome da renda", income.name);
+  const value = Number(prompt("Valor", income.value));
+
+  if (!name || value <= 0) return;
+
+  income.name = name;
+  income.value = value;
+
+  saveToDrive();
+  render();
+}
+
+function editExpense(id) {
+  const month = db.months[currentMonth];
+  const expense = month.expenses.find(e => e.id === id);
+
+  const name = prompt("Nome da despesa", expense.name);
+  const value = Number(prompt("Valor", expense.value));
+
+  if (!name || value <= 0) return;
+
+  expense.name = name;
+  expense.value = value;
+
+  saveToDrive();
+  render();
+}
+
 function render() {
   const month = db.months[currentMonth];
 
@@ -161,6 +207,10 @@ function render() {
         <strong style="color:#16a34a">
           + R$ ${i.value.toFixed(2)}
         </strong>
+        <div class="actions-inline">
+          <button onclick="editIncome('${i.id}')">✏️</button>
+          <button onclick="deleteIncome('${i.id}')">🗑️</button>
+        </div>
       </li>
     `;
   });
@@ -178,6 +228,10 @@ function render() {
         <strong style="color:#dc2626">
           - R$ ${e.value.toFixed(2)}
         </strong>
+        <div class="actions-inline">
+          <button onclick="editExpense('${e.id}')">✏️</button>
+          <button onclick="deleteExpense('${e.id}')">🗑️</button>
+        </div>
       </li>
     `;
   });
@@ -191,8 +245,6 @@ function render() {
   document.getElementById("balance").innerText =
     (totalIncome - totalExpense).toFixed(2);
 }
-
-
 
 function persist() {
   saveLocalData(db);
