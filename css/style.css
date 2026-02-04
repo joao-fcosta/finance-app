@@ -1,181 +1,317 @@
+/* ==========================================================================
+   1. VARIÁVEIS E TEMAS
+   ========================================================================== */
+:root {
+    /* Tema Claro (Padrão) */
+    --bg-color: #f2f4f8;
+    --card-bg: #ffffff;
+    --text-main: #111827;
+    --text-secondary: #6b7280;
+    --border-color: #e5e7eb;
+    
+    --primary: #2563eb;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --on-primary: #ffffff;
+    
+    --topbar-bg: #111827;
+    --topbar-text: #ffffff;
+    --overlay-bg: rgba(0,0,0,0.5);
+    --shadow-color: rgba(0,0,0,.06);
+    --shadow-color-sm: rgba(0,0,0,.04);
+    --muted-bg: #f3f4f6;
+    --danger-light-bg: #fee2e2;
+    --calendar-icon-filter: invert(0);
+}
+
+body.dark-theme {
+    /* Tema Escuro */
+    --bg-color: #0f172a;      
+    --card-bg: #1e293b;      
+    --text-main: #f8fafc;
+    --text-secondary: #94a3b8;
+    --border-color: #334155;
+
+    --danger: #f87171;
+    --shadow-color: rgba(0,0,0,.4);
+    --shadow-color-sm: rgba(0,0,0,.25);
+    --muted-bg: #0f172a;
+    --danger-light-bg: rgba(248,113,113,0.12);
+    --calendar-icon-filter: invert(1);
+    --topbar-bg-active: #1e293b;
+}
+
+/* ==========================================================================
+   2. RESET E GERAL
+   ========================================================================== */
 * {
-  box-sizing: border-box;
-  font-family: 'Inter', system-ui, sans-serif;
+    box-sizing: border-box;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent; /* Remove brilho de toque no mobile */
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    overscroll-behavior-y: none; /* Impede pull-to-refresh e bounce */
 }
 
 body {
-  margin: 0;
-  background: #f2f4f8;
-  color: #111;
+    background: var(--bg-color);
+    color: var(--text-main);
+    transition: background 0.3s, color 0.3s;
+    line-height: 1.5;
 }
 
-.hidden {
-  display: none;
+.hidden { display: none !important; }
+
+.sr-only { /* Acessibilidade: esconde visualmente mas mantém para leitores */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
 }
 
-/* Topbar */
+/* ==========================================================================
+   3. LAYOUT E ESTRUTURA
+   ========================================================================== */
+.container {
+    padding: 1rem;
+    max-width: 600px;
+    margin: auto;
+    padding-bottom: 6rem; /* Espaço para botões de ação fixos se houver */
+}
+
 .topbar {
-  background: #111827;
-  color: #fff;
-  padding: 1rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+    background: var(--topbar-bg);
+    color: var(--topbar-text);
+    padding: 1rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 50;
 }
 
 .topbar h1 {
-  margin: 0;
-  font-size: 1.2rem;
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 700;
 }
 
-/* Layout */
-.container {
-  padding: 1rem;
-  max-width: 900px;
-  margin: auto;
-}
-
-/* Month selector */
-.month-bar {
-  margin-bottom: 1rem;
-}
-
-.month-bar input {
-  width: 100%;
-  padding: .7rem;
-  border-radius: 8px;
-  border: none;
-  font-size: 1rem;
-}
-
-/* Summary cards */
-.summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.summary-card {
-  background: #fff;
-  padding: 1rem;
-  border-radius: 14px;
-  box-shadow: 0 8px 20px rgba(0,0,0,.06);
-}
-
-.summary-card span {
-  font-size: .85rem;
-  color: #6b7280;
-}
-
-.summary-card strong {
-  font-size: 1.4rem;
-}
-
-.income strong { color: #16a34a; }
-.expense strong { color: #dc2626; }
-.balance strong { color: #2563eb; }
-
-/* Actions */
-.actions {
-  display: flex;
-  gap: .5rem;
-  margin-bottom: 1.5rem;
-}
-
-.btn {
-  flex: 1;
-  padding: .8rem;
-  border-radius: 10px;
-  border: none;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.primary {
-  background: #2563eb;
-  color: white;
-}
-
-.success {
-  background: #16a34a;
-  color: white;
-}
-
-.danger {
-  background: #dc2626;
-  color: white;
-}
-
-/* List */
-.list h2 {
-  margin-bottom: .5rem;
-}
-
-ul {
-  list-style: none;
-  padding: 0;
-}
-
-li {
-  background: #fff;
-  padding: .8rem;
-  border-radius: 10px;
-  margin-bottom: .5rem;
-  display: flex;
-  justify-content: space-between;
-  box-shadow: 0 4px 10px rgba(0,0,0,.04);
-}
-
+/* ==========================================================================
+   4. TELA DE LOGIN
+   ========================================================================== */
 .login-screen {
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #2563eb, #1e40af);
-}
-
-.login-card {
-  background: white;
-  padding: 2rem;
-  border-radius: 18px;
-  width: 100%;
-  max-width: 360px;
-  text-align: center;
-  box-shadow: 0 20px 40px rgba(0,0,0,.2);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    text-align: center;
 }
 
 .login-card h1 {
-  margin-bottom: .5rem;
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 0.5rem;
 }
 
 .login-card p {
-  color: #6b7280;
-  margin-bottom: 1.5rem;
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    margin-bottom: 3rem;
 }
 
-.full {
-  width: 100%;
-}
- 
-.list-group {
-  margin-bottom: 1.5rem;
+/* ==========================================================================
+   5. COMPONENTES DE FORMULÁRIO
+   ========================================================================== */
+.month-bar { margin-bottom: 1.5rem; }
+
+.month-bar input[type="month"] {
+    width: 100%;
+    padding: 0.8rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-main);
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    appearance: none;
+    -webkit-appearance: none;
+    min-height: 48px;
+    box-shadow: inset 0 2px 4px var(--shadow-color-sm);
 }
 
+input[type="month"]::-webkit-calendar-picker-indicator {
+    filter: var(--calendar-icon-filter);
+}
+
+input, select, textarea { font-size: 16px !important; }
+
+/* ==========================================================================
+   6. CARDS DE RESUMO
+   ========================================================================== */
+.summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.summary-card {
+    background: var(--card-bg);
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.summary-card span {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.currency-value {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-top: 0.4rem;
+}
+
+.currency-value .symbol {
+    font-size: 0.85rem;
+    font-weight: 600;
+    opacity: 0.7;
+}
+
+.currency-value span:last-child {
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.income .currency-value { color: var(--success); }
+.expense .currency-value { color: var(--danger); }
+.balance .currency-value { color: var(--primary); }
+
+/* ==========================================================================
+   7. LISTAS E ITENS
+   ========================================================================== */
 .list-group h2 {
-  font-size: 1.1rem;
-  margin-bottom: .5rem;
-  color: #374151;
+    font-size: 1.1rem;
+    margin: 1.5rem 0 0.8rem;
+    color: var(--text-main);
 }
 
-.actions-inline {
-  display: flex;
-  gap: .4rem;
+.mobile-list {
+    list-style: none;
+    padding: 0;
 }
 
-.actions-inline button {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 1rem;
+.mobile-list li {
+    background: var(--card-bg);
+    padding: 1rem;
+    border-radius: 14px;
+    margin-bottom: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 2px 6px var(--shadow-color-sm);
 }
+
+.mobile-list li .info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mobile-list li .info strong { font-size: 1rem; }
+.mobile-list li .type { font-size: 0.75rem; color: var(--text-secondary); }
+
+/* ==========================================================================
+   8. BOTÕES E AÇÕES
+   ========================================================================== */
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn:active { transform: scale(0.97); filter: brightness(0.9); }
+
+.btn.primary.full {
+    background: var(--topbar-bg);
+    color: var(--on-primary);
+    height: 56px;
+    border-radius: 16px;
+    width: 100%;
+}
+
+.actions { display: flex; gap: 0.8rem; margin: 1rem 0; }
+
+.btn-fab {
+    flex: 1;
+    min-height: 52px;
+    border-radius: 14px;
+    border: none;
+    color: white;
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.success { background: var(--success); }
+.danger { background: var(--danger); }
+
+/* ==========================================================================
+   9. BOTTOM SHEET E MODAIS
+   ========================================================================== */
+.overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(2px);
+    z-index: 100;
+}
+
+.bottom-sheet {
+    position: fixed;
+    bottom: 0; left: 0; width: 100%;
+    background: var(--card-bg);
+    border-radius: 24px 24px 0 0;
+    padding: 1.5rem;
+    z-index: 101;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bottom-sheet.hidden { transform: translateY(100%); display: block !important; }
+
+.sheet-handle {
+    width: 40px; height: 5px; background: var(--border-color);
+    border-radius: 10px; margin: -0.5rem auto 1.5rem;
+}
+
+.btn-sheet {
+    width: 100%;
+    display: flex; align-items: center; padding: 1rem;
+    border: none; border-radius: 12px; margin-bottom: 0.5rem;
+    font-size: 1rem; font-weight: 600; gap: 1rem;
+}
+
+.btn-sheet.secondary { background: var(--muted-bg); color: var(--text-main); }
+.btn-sheet.danger-light { background: var(--danger-light-bg); color: var(--danger); }

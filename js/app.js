@@ -1,253 +1,236 @@
 let db = null;
 let currentMonth = null;
 
+// --- INICIALIZAÇÃO ---
 async function initApp() {
-  // tenta carregar do Drive
-  const driveData = await loadFromDrive();
+    const isLocalHost = location.pathname === "/index.html" || location.hostname === "127.0.0.1" || location.port === "5500";
+    console.log(location.host);
+    let driveData = null;
 
-  if (driveData) {
-    db = driveData;
-    console.log("✔ Dados carregados do Drive");
-  } else {
-    db = loadLocalData() || defaultData();
-    console.log("✔ Nenhum arquivo no Drive, usando dados locais");
-    await saveToDrive(db);
-  }
+    if (isLocalHost) {
+        try {
+            const res = await fetch("finance.json");
+            if (res.ok) {
+                driveData = await res.json();
+                console.log("🛠️ [Debug] Dados de finance.json");
+            }
+        } catch (err) { console.info("💡 Sem finance.json local."); }
+    } else {
+        try {
+            driveData = await loadFromDrive();
+        } catch (err) { console.error("❌ Erro Drive:", err); }
+    }
 
-  saveLocalData(db);
-
-  const input = document.getElementById("monthSelector");
-  input.value = new Date().toISOString().slice(0, 7);
-  changeMonth(input.value);
-  input.onchange = e => changeMonth(e.target.value);
+    db = driveData || loadLocalData() || { months: {} };
+    
+    // Configuração inicial da data
+    const input = document.getElementById("monthSelector");
+    input.value = new Date().toISOString().slice(0, 7);
+    
+    changeMonth(input.value);
+    input.onchange = e => changeMonth(e.target.value);
 }
 
 function changeMonth(month) {
-  currentMonth = month;
-  if (!db.months[month]) {
-    db.months[month] = { incomes: [], expenses: [] };
-  }
-  render();
+    currentMonth = month;
+    if (!db.months[month]) {
+        db.months[month] = { incomes: [], expenses: [] };
+    }
+    render();
 }
 
+// --- ADICIONAR DADOS ---
 function addIncome() {
-  const name = prompt("Nome da renda:");
-  if (!name) return alert("Nome é obrigatório");
+    const name = prompt("Nome da renda:");
+    if (!name) return;
+    const value = parseFloat(prompt("Valor:").replace(',', '.'));
+    if (isNaN(value)) return;
+    
+    const fixed = confirm("É renda fixa?");
 
-  const value = Number(prompt("Valor:"));
-  const fixed = confirm("É renda fixa?");
+    const income = { id: crypto.randomUUID(), name, value, type: fixed ? "fixed" : "single" };
+    db.months[currentMonth].incomes.push(income);
 
-  db.months[currentMonth].incomes.push({
-    id: crypto.randomUUID(),
-    name,
-    value,
-    type: fixed ? "fixed" : "single"
-  });
-
-  if (fixed) replicateIncome(name, value);
-  persist();
+    if (fixed) replicateData(income, 'incomes');
+    persist();
 }
-
 
 function addExpense() {
-  const name = prompt("Nome da despesa:");
-  if (!name) return alert("Nome é obrigatório");
+    const name = prompt("Nome da despesa:");
+    if (!name) return;
+    const value = parseFloat(prompt("Valor:").replace(',', '.'));
+    if (isNaN(value)) return;
 
-  const value = Number(prompt("Valor:"));
-  const fixed = confirm("É despesa fixa?");
+    const fixed = confirm("É despesa fixa?");
+    let expense = { id: crypto.randomUUID(), name, value, type: fixed ? "fixed" : "variable" };
 
-  let expense = {
-    id: crypto.randomUUID(),
-    name,
-    value,
-    type: fixed ? "fixed" : "variable"
-  };
-
-  if (!fixed) {
-    const parcelado = confirm("É parcelado?");
-    if (parcelado) {
-      const total = Number(prompt("Quantidade de parcelas:"));
-      expense.installment = { current: 1, total };
-      replicateInstallment(expense);
-    }
-  }
-
-  db.months[currentMonth].expenses.push(expense);
-
-  if (fixed) replicateExpense(name, value);
-  persist();
-}
-
-function nextMonths(startMonth) {
-  const [y, m] = startMonth.split("-").map(Number);
-  let months = [];
-  for (let i = m + 1; i <= 12; i++) {
-    months.push(`${y}-${String(i).padStart(2, "0")}`);
-  }
-  return months;
-}
-
-function replicateIncome(name, value) {
-  nextMonths(currentMonth).forEach(month => {
-    if (!db.months[month]) {
-      db.months[month] = { incomes: [], expenses: [] };
+    if (!fixed) {
+        const parcelado = confirm("É parcelado?");
+        if (parcelado) {
+            const total = parseInt(prompt("Quantidade de parcelas:"));
+            if (isNaN(total)) return;
+            expense.installment = { current: 1, total };
+            replicateInstallments(expense);
+        }
     }
 
-    db.months[month].incomes.push({
-      id: crypto.randomUUID(),
-      name,
-      value,
-      type: "fixed"
-    });
-  });
+    db.months[currentMonth].expenses.push(expense);
+    if (fixed) replicateData(expense, 'expenses');
+    persist();
 }
 
-function replicateExpense(name, value) {
-  nextMonths(currentMonth).forEach(month => {
-    if (!db.months[month]) {
-      db.months[month] = { incomes: [], expenses: [] };
+// --- LÓGICA DE REPLICAÇÃO (Melhorada para virada de ano) ---
+function replicateData(item, category) {
+    let [year, month] = currentMonth.split("-").map(Number);
+    
+    // Replica para os próximos 11 meses (totalizando 1 ano)
+    for (let i = 1; i < 12; i++) {
+        month++;
+        if (month > 12) { month = 1; year++; }
+        
+        const targetMonth = `${year}-${String(month).padStart(2, "0")}`;
+        if (!db.months[targetMonth]) db.months[targetMonth] = { incomes: [], expenses: [] };
+        
+        db.months[targetMonth][category].push({ ...item, id: crypto.randomUUID() });
     }
-
-    db.months[month].expenses.push({
-      id: crypto.randomUUID(),
-      name,
-      value,
-      type: "fixed"
-    });
-  });
 }
 
-function replicateInstallment(expense) {
-  let count = expense.installment.total;
-  let months = nextMonths(currentMonth);
+function replicateInstallments(expense) {
+    let [year, month] = currentMonth.split("-").map(Number);
+    const total = expense.installment.total;
 
-  months.slice(0, count - 1).forEach((month, i) => {
-    if (!db.months[month]) {
-      db.months[month] = { incomes: [], expenses: [] };
+    for (let i = 2; i <= total; i++) {
+        month++;
+        if (month > 12) { month = 1; year++; }
+        
+        const targetMonth = `${year}-${String(month).padStart(2, "0")}`;
+        if (!db.months[targetMonth]) db.months[targetMonth] = { incomes: [], expenses: [] };
+        
+        db.months[targetMonth].expenses.push({
+            ...expense,
+            id: crypto.randomUUID(),
+            installment: { current: i, total: total }
+        });
     }
-
-    db.months[month].expenses.push({
-      ...expense,
-      id: crypto.randomUUID(),
-      installment: {
-        current: i + 2,
-        total: expense.installment.total
-      }
-    });
-  });
 }
 
+// --- AÇÕES ---
 function deleteIncome(id) {
-  const month = db.months[currentMonth];
-  month.incomes = month.incomes.filter(i => i.id !== id);
-  saveToDrive();
-  render();
+    db.months[currentMonth].incomes = db.months[currentMonth].incomes.filter(i => i.id !== id);
+    persist();
 }
 
 function deleteExpense(id) {
-  const month = db.months[currentMonth];
-  month.expenses = month.expenses.filter(e => e.id !== id);
-  saveToDrive();
-  render();
+    db.months[currentMonth].expenses = db.months[currentMonth].expenses.filter(e => e.id !== id);
+    persist();
 }
 
 function editIncome(id) {
-  const month = db.months[currentMonth];
-  const income = month.incomes.find(i => i.id === id);
-
-  const name = prompt("Nome da renda", income.name);
-  const value = Number(prompt("Valor", income.value));
-
-  if (!name || value <= 0) return;
-
-  income.name = name;
-  income.value = value;
-
-  saveToDrive();
-  render();
+    const item = db.months[currentMonth].incomes.find(i => i.id === id);
+    const newName = prompt("Nome:", item.name);
+    const newValue = parseFloat(prompt("Valor:", item.value));
+    if (newName && !isNaN(newValue)) {
+        item.name = newName;
+        item.value = newValue;
+        persist();
+    }
 }
 
 function editExpense(id) {
-  const month = db.months[currentMonth];
-  const expense = month.expenses.find(e => e.id === id);
+    const item = db.months[currentMonth].expenses.find(e => e.id === id);
+    const newName = prompt("Nome:", item.name);
+    const newValue = parseFloat(prompt("Valor:", item.value));
+    if (newName && !isNaN(newValue)) {
+        item.name = newName;
+        item.value = newValue;
+        persist();
+    }
+}
 
-  const name = prompt("Nome da despesa", expense.name);
-  const value = Number(prompt("Valor", expense.value));
-
-  if (!name || value <= 0) return;
-
-  expense.name = name;
-  expense.value = value;
-
-  saveToDrive();
-  render();
+// --- RENDERIZAÇÃO ---
+function formatCurrency(val) {
+    return val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function render() {
-  const month = db.months[currentMonth];
+    const month = db.months[currentMonth] || { incomes: [], expenses: [] };
+    const incomeList = document.getElementById("incomeList");
+    const expenseList = document.getElementById("expenseList");
 
-  const incomeList = document.getElementById("incomeList");
-  const expenseList = document.getElementById("expenseList");
+    incomeList.innerHTML = "";
+    expenseList.innerHTML = "";
 
-  incomeList.innerHTML = "";
-  expenseList.innerHTML = "";
+    let totalIn = 0, totalOut = 0;
 
-  let totalIncome = 0;
-  let totalExpense = 0;
+    month.incomes.forEach(i => {
+        totalIn += i.value;
+        incomeList.innerHTML += `
+            <li onclick="openActionMenu('${i.id}', 'income', '${i.name}')">
+                <div class="info">
+                    <strong>${i.name}</strong>
+                    <span class="type">${i.type === "fixed" ? "Fixa" : "Única"}</span>
+                </div>
+                <strong style="color:var(--success)">+ R$ ${formatCurrency(i.value)}</strong>
+            </li>`;
+    });
 
-  month.incomes.forEach((i, index) => {
-    totalIncome += i.value;
+    month.expenses.forEach(e => {
+        totalOut += e.value;
+        expenseList.innerHTML += `
+            <li onclick="openActionMenu('${e.id}', 'expense', '${e.name}')">
+                <div class="info">
+                    <strong>${e.name}</strong>
+                    <span class="type">
+                        ${e.type === "fixed" ? "Fixa" : "Variável"}
+                        ${e.installment ? `<span class="badge-parcela">• ${e.installment.current}/${e.installment.total}</span>` : ""}
+                    </span>
+                </div>
+                <strong style="color:var(--danger)">- R$ ${formatCurrency(e.value)}</strong>
+            </li>`;
+    });
 
-    incomeList.innerHTML += `
-      <li>
-        <span>
-          ${i.name}
-          ${i.type === "fixed" ? "(Fixa)" : "(Única)"}
-        </span>
-        <strong style="color:#16a34a">
-          + R$ ${i.value.toFixed(2)}
-        </strong>
-        <div class="actions-inline">
-          <button onclick="editIncome('${i.id}')">✏️</button>
-          <button onclick="deleteIncome('${i.id}')">🗑️</button>
-        </div>
-      </li>
-    `;
-  });
+    document.getElementById("totalIncome").innerText = formatCurrency(totalIn);
+    document.getElementById("totalExpense").innerText = formatCurrency(totalOut);
+    document.getElementById("balance").innerText = formatCurrency(totalIn - totalOut);
+}
 
-  month.expenses.forEach((e, index) => {
-    totalExpense += e.value;
+// --- UI / AUXILIARES ---
+function openActionMenu(id, type, name) {
+    const sheet = document.getElementById('bottom-sheet');
+    const overlay = document.getElementById('overlay');
+    
+    document.getElementById('sheet-title').innerText = name;
+    document.getElementById('sheet-subtitle').innerText = type === 'income' ? 'Renda' : 'Conta';
 
-    expenseList.innerHTML += `
-      <li>
-        <span>
-          ${e.name}
-          ${e.type === "fixed" ? "(Fixa)" : "(Variável)"}
-          ${e.installment ? `(${e.installment.current}/${e.installment.total})` : ""}
-        </span>
-        <strong style="color:#dc2626">
-          - R$ ${e.value.toFixed(2)}
-        </strong>
-        <div class="actions-inline">
-          <button onclick="editExpense('${e.id}')">✏️</button>
-          <button onclick="deleteExpense('${e.id}')">🗑️</button>
-        </div>
-      </li>
-    `;
-  });
+    document.getElementById('btn-edit').onclick = () => {
+        type === 'income' ? editIncome(id) : editExpense(id);
+        closeBottomSheet();
+    };
+    
+    document.getElementById('btn-delete').onclick = () => {
+        if(confirm(`Excluir "${name}"?`)) {
+            type === 'income' ? deleteIncome(id) : deleteExpense(id);
+        }
+        closeBottomSheet();
+    };
 
-  document.getElementById("totalIncome").innerText =
-    totalIncome.toFixed(2);
+    sheet.classList.remove('hidden');
+    overlay.classList.remove('hidden');
+}
 
-  document.getElementById("totalExpense").innerText =
-    totalExpense.toFixed(2);
+function closeBottomSheet() {
+    document.getElementById('bottom-sheet').classList.add('hidden');
+    document.getElementById('overlay').classList.add('hidden');
+}
 
-  document.getElementById("balance").innerText =
-    (totalIncome - totalExpense).toFixed(2);
+function toggleTheme() {
+    const isDark = document.body.classList.toggle('dark-theme');
+    document.getElementById('theme-btn').innerText = isDark ? '☀️' : '🌙';
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
 }
 
 function persist() {
-  saveLocalData(db);
-  saveToDrive(db);
-  render();
+    saveLocalData(db);
+    saveToDrive(db);
+    render();
 }
