@@ -139,49 +139,58 @@ function replicateInstallment(expense) {
 
 function render() {
   const month = db.months[currentMonth];
-  const income = month.incomes.forEach(i => {
-    list.innerHTML += `
-    <li>
-      <span>${i.name} ${i.type === "fixed" ? "(Fixa)" : ""}</span>
-      <strong style="color:#16a34a">+ R$ ${i.value.toFixed(2)}</strong>
-    </li>`;
-  });
-  const expense = month.expenses.forEach(e => {
-    list.innerHTML += `
-    <li>
-      <span>
-        ${e.name}
-        ${e.type === "fixed" ? "(Fixa)" : ""}
-        ${e.installment ? `(${e.installment.current}/${e.installment.total})` : ""}
-      </span>
-      <strong style="color:#dc2626">- R$ ${e.value.toFixed(2)}</strong>
-    </li>`;
-  });
 
   const list = document.getElementById("entries");
   list.innerHTML = "";
-  document.getElementById("totalIncome").innerText = income.toFixed(2);
-  document.getElementById("totalExpense").innerText = expense.toFixed(2);
-  document.getElementById("balance").innerText = (income - expense).toFixed(2);
 
-  
+  let totalIncome = 0;
+  let totalExpense = 0;
 
+  // RENDAS
   month.incomes.forEach(i => {
+    totalIncome += i.value;
+
     list.innerHTML += `
       <li>
-        <span>Renda</span>
-        <strong style="color:#16a34a">+ R$ ${i.value.toFixed(2)}</strong>
-      </li>`;
+        <span>
+          ${i.name}
+          ${i.type === "fixed" ? "(Fixa)" : "(Única)"}
+        </span>
+        <strong style="color:#16a34a">
+          + R$ ${i.value.toFixed(2)}
+        </strong>
+      </li>
+    `;
   });
 
+  // DESPESAS
   month.expenses.forEach(e => {
+    totalExpense += e.value;
+
     list.innerHTML += `
       <li>
-        <span>Conta ${e.fixed ? "(Fixa)" : ""}</span>
-        <strong style="color:#dc2626">- R$ ${e.value.toFixed(2)}</strong>
-      </li>`;
+        <span>
+          ${e.name}
+          ${e.type === "fixed" ? "(Fixa)" : "(Variável)"}
+          ${e.installment ? `(${e.installment.current}/${e.installment.total})` : ""}
+        </span>
+        <strong style="color:#dc2626">
+          - R$ ${e.value.toFixed(2)}
+        </strong>
+      </li>
+    `;
   });
+
+  document.getElementById("totalIncome").innerText =
+    totalIncome.toFixed(2);
+
+  document.getElementById("totalExpense").innerText =
+    totalExpense.toFixed(2);
+
+  document.getElementById("balance").innerText =
+    (totalIncome - totalExpense).toFixed(2);
 }
+
 
 function persist() {
   saveLocalData(db);
