@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#111827" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <title>Finance | Controle Financeiro</title>
+
+    <link rel="stylesheet" href="css/style.css" />
+
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+
+<body>
+
+    <!-- Barra Superior -->
+    <div class="topbar">
+            <h1>Finance</h1>
+            <button onclick="toggleTheme()" id="theme-btn"
+                style="background:transparent; border:none; font-size:1.2rem;">
+                🌙
+            </button>
+    </div>
+
+    <!-- Conteúdo Principal -->
+    <main id="app" class="container">
+
+        <header class="header">
+            <section class="month-bar">
+                <label for="monthSelector">Mês de referência:</label>
+                <input type="month" id="monthSelector" class="input-mobile" />
+            </section>
+        </header>
+
+        <!-- Cards de Resumo -->
+        <section class="summary" aria-labelledby="resumo-financeiro">
+            <h2 id="resumo-financeiro" class="sr-only">Resumo Financeiro</h2>
+
+            <div class="summary-card income">
+                <span>Rendas</span>
+                <strong class="currency-value">
+                    <span class="symbol">R$</span>
+                    <span id="totalIncome">0,00</span>
+                </strong>
+            </div>
+
+            <div class="summary-card expense">
+                <span>Contas</span>
+                <strong class="currency-value">
+                    <span class="symbol">R$</span>
+                    <span id="totalExpense">0,00</span>
+                </strong>
+            </div>
+
+            <div class="summary-card balance">
+                <span>Saldo Atual</span>
+                <strong class="currency-value">
+                    <span class="symbol">R$</span>
+                    <span id="balance">0,00</span>
+                </strong>
+            </div>
+        </section>
+
+        <!-- Botões de Ação -->
+        <section class="actions">
+            <button onclick="addIncome()" class="btn btn-fab success" title="Adicionar Renda">+</button>
+            <button onclick="addExpense()" class="btn btn-fab danger" title="Adicionar Conta">-</button>
+        </section>
+
+        <!-- Listas -->
+        <section class="list-container">
+            <article class="list-group">
+                <h2>Rendas</h2>
+                <ul id="incomeList" class="mobile-list"></ul>
+            </article>
+
+            <article class="list-group">
+                <h2>Contas</h2>
+                <ul id="expenseList" class="mobile-list"></ul>
+            </article>
+        </section>
+
+    </main>
+
+    <!-- Overlay do Bottom Sheet -->
+    <div id="overlay" class="overlay hidden" onclick="closeBottomSheet()"></div>
+
+    <!-- Bottom Sheet -->
+    <div id="bottom-sheet" class="bottom-sheet hidden">
+        <div class="sheet-handle"></div>
+        <div class="sheet-content">
+            <h3 id="sheet-title">Opções</h3>
+            <p id="sheet-subtitle"></p>
+
+            <div class="sheet-actions">
+                <button id="btn-edit" class="btn-sheet secondary">
+                    <span>✏️</span> Editar
+                </button>
+                <button id="btn-delete" class="btn-sheet danger-light">
+                    <span>🗑️</span> Excluir
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/auth.js" defer></script>
+    <script src="js/storage.js" defer></script>
+    <script src="js/drive.js" defer></script>
+    <script src="js/app.js" defer></script>
+
+</body>
+
+</html>

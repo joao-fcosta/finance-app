@@ -53,16 +53,7 @@ git clone https://github.com/seu-usuario/finance.git
 │   ├── drive.js       # Comunicação com a API do Drive
 │   ├── storage.js     # Fallback para LocalStorage
 │   └── app.js         # Lógica de negócio e renderização
-├── index.html         # Estrutura principal
+├── app.html           # Estrutura principal
+├── index.html         # Tela de login
 └── finance.json       # (Apenas para debug local)
 ```
-## Roadmap de Melhorias
-[ ] Implementar notificações "Toast" para confirmação de salvamento.
-
-[ ] Criar modais customizados para evitar o uso de prompt().
-
-[ ] Gráficos de pizza para visualização de gastos por categoria.
-
-[ ] Funcionalidade de exportar dados para CSV.
-
-Desenvolvido com ☕ e foco em produtividade.

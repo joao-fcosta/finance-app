@@ -1,6 +1,9 @@
 let db = null;
 let currentMonth = null;
 
+document.addEventListener('DOMContentLoaded', async () => {
+    await initApp();
+});
 // --- INICIALIZAÇÃO ---
 async function initApp() {
     const isLocalHost = location.pathname === "/index.html" || location.hostname === "127.0.0.1" || location.port === "5500";
