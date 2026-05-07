@@ -110,7 +110,46 @@
     <script src="js/storage.js" defer></script>
     <script src="js/drive.js" defer></script>
     <script src="js/app.js" defer></script>
+        <!-- Modal de Confirmação -->
+    <dialog id="confirmModal" class="custom-dialog">
+        <h3 id="confirmTitle">Tem certeza?</h3>
+        <div class="dialog-actions">
+            <button id="btnConfirmCancel" class="btn-cancel">Cancelar</button>
+            <button id="btnConfirmOk" class="btn-danger">Excluir</button>
+        </div>
+    </dialog>
 
+    <!-- Modal de Transação (Renda/Despesa) -->
+    <dialog id="transactionModal" class="custom-dialog">
+        <h3 id="modalTitle">Nova Transação</h3>
+        <form id="transactionForm">
+            <div class="input-group">
+                <input type="text" id="transName" placeholder="Nome (ex: Salário)" required>
+            </div>
+            <div class="input-group">
+                <input type="number" id="transValue" step="0.01" placeholder="Valor (R$)" required>
+            </div>
+
+            <label class="checkbox-container">
+                <input type="checkbox" id="transFixed">
+                <span>É um valor fixo mensal?</span>
+            </label>
+
+            <!-- Container de parcelas (só aparece para despesas não-fixas) -->
+            <div id="installmentContainer" style="display: none; margin-top: 10px;">
+                <label class="checkbox-container">
+                    <input type="checkbox" id="transIsInstallment">
+                    <span>É parcelado?</span>
+                </label>
+                <input type="number" id="transTotalInstallments" placeholder="Qtd. de Parcelas" min="2" style="display: none; margin-top: 10px;">
+            </div>
+
+            <div class="dialog-actions">
+                <button type="button" id="btnTransCancel" class="btn-cancel">Cancelar</button>
+                <button type="submit" class="btn-success">Salvar</button>
+            </div>
+        </form>
+    </dialog>
 </body>
 
 </html>

@@ -22,6 +22,14 @@
     --muted-bg: #f3f4f6;
     --danger-light-bg: #fee2e2;
     --calendar-icon-filter: invert(0);
+
+    --dialog-bg: #ffffff;
+    --dialog-text: #333333;
+    --input-bg: #ffffff;
+    --input-border: #cccccc;
+    --input-text: #333333;
+    --btn-cancel-bg: #e0e0e0;
+    --btn-cancel-text: #333333;
 }
 
 body.dark-theme {
@@ -39,6 +47,14 @@ body.dark-theme {
     --danger-light-bg: rgba(248,113,113,0.12);
     --calendar-icon-filter: invert(1);
     --topbar-bg-active: #1e293b;
+
+    --dialog-bg: #1f2937; 
+    --dialog-text: #f3f4f6;
+    --input-bg: #374151;
+    --input-border: #4b5563;
+    --input-text: #f3f4f6;
+    --btn-cancel-bg: #4b5563;
+    --btn-cancel-text: #f3f4f6;
 }
 
 /* ==========================================================================
@@ -315,3 +331,101 @@ input, select, textarea { font-size: 16px !important; }
 
 .btn-sheet.secondary { background: var(--muted-bg); color: var(--text-main); }
 .btn-sheet.danger-light { background: var(--danger-light-bg); color: var(--danger); }
+
+/* 1. Defina as variáveis do modal no escopo principal e no dark-theme */
+:root {
+    --dialog-bg: #ffffff;
+    --dialog-text: #333333;
+    --input-bg: #ffffff;
+    --input-border: #cccccc;
+    --input-text: #333333;
+    --btn-cancel-bg: #e0e0e0;
+    --btn-cancel-text: #333333;
+}
+
+body.dark-theme {
+    /* Tons de cinza baseados no seu meta theme-color #111827 */
+    --dialog-bg: #1f2937; 
+    --dialog-text: #f3f4f6;
+    --input-bg: #374151;
+    --input-border: #4b5563;
+    --input-text: #f3f4f6;
+    --btn-cancel-bg: #4b5563;
+    --btn-cancel-text: #f3f4f6;
+}
+
+/* 2. Atualize as classes para usar as variáveis */
+.custom-dialog {
+    border: none;
+    border-radius: 12px;
+    padding: 24px;
+    width: 90%;
+    max-width: 400px;
+    background: var(--dialog-bg);
+    color: var(--dialog-text);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5); /* Sombra levemente mais forte */
+}
+
+/* Fundo escuro atrás do modal */
+.custom-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.7); /* Fundo um pouco mais opaco pro dark mode */
+    backdrop-filter: blur(3px);
+}
+
+.custom-dialog h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    font-size: 1.2rem;
+}
+
+/* Inputs adaptáveis ao tema */
+.custom-dialog input[type="text"],
+.custom-dialog input[type="number"] {
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--input-bg);
+    color: var(--input-text);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    box-sizing: border-box;
+    outline: none;
+    transition: border-color 0.3s ease;
+}
+
+.custom-dialog input[type="text"]:focus,
+.custom-dialog input[type="number"]:focus {
+    border-color: var(--success, #2ed573); /* Destaque ao clicar no input */
+}
+
+/* Estilo do checkbox adaptado */
+.checkbox-container span {
+    color: var(--dialog-text);
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.dialog-actions button {
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: filter 0.2s;
+}
+
+.dialog-actions button:active {
+    filter: brightness(0.9);
+}
+
+.btn-cancel { 
+    background: var(--btn-cancel-bg); 
+    color: var(--btn-cancel-text); 
+}
+.btn-danger { background: var(--danger, #ff4757); color: white; }
+.btn-success { background: var(--success, #2ed573); color: white; }

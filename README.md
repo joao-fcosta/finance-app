@@ -1,5 +1,13 @@
-# Finance | Controle Financeiro Mobile
+# <p align="center">Finance</p>
 
+<p align="center">
+  <strong>Controle Financeiro Mobile</strong><br>
+  Engenharia de Software | Unicatólica-TO
+</p>
+
+---
+
+## Sobre
 Finance é uma aplicação web progressiva (PWA) focada em simplicidade e privacidade. Projetado especificamente para uso em dispositivos móveis, ele permite que você gerencie suas rendas e despesas diretamente do seu navegador, utilizando o seu Google Drive pessoal como banco de dados.
 ***
 ## Principais Funcionalidades
