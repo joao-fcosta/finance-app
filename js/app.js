@@ -5,8 +5,9 @@ document.addEventListener('DOMContentLoaded', initApp);
 
 // --- INICIALIZAÇÃO ---
 async function initApp() {
-    // Simplificação da checagem de localhost
-    const isLocalHost = ["", "127.0.0.1", "localhost"].some(h => location.hostname.includes(h));
+    const host = location.hostname;
+    const isLocalHost = host === "" || host === "127.0.0.1" || host === "localhost" || location.port === "5500";
+    
     let driveData = null;
 
     if (isLocalHost) {
@@ -15,7 +16,9 @@ async function initApp() {
             if (res.ok) driveData = await res.json();
         } catch { console.info("💡 Sem finance.json local."); }
     } else {
-        try { driveData = await loadFromDrive(); } 
+        try { 
+            driveData = await loadFromDrive(); 
+        } 
         catch (err) { console.error("❌ Erro Drive:", err); }
     }
 
@@ -23,6 +26,7 @@ async function initApp() {
     
     const input = document.getElementById("monthSelector");
     input.value = new Date().toISOString().slice(0, 7);
+    
     changeMonth(input.value);
     input.onchange = e => changeMonth(e.target.value);
 }
