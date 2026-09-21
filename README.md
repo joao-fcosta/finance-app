@@ -1,67 +1,36 @@
-# <p align="center">Finance</p>
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-<p align="center">
-  <strong>Controle Financeiro Mobile</strong><br>
-  Engenharia de Software | Unicatólica-TO
-</p>
+## Getting Started
 
----
+First, run the development server:
 
-## Sobre
-Finance é uma aplicação web progressiva (PWA) focada em simplicidade e privacidade. Projetado especificamente para uso em dispositivos móveis, ele permite que você gerencie suas rendas e despesas diretamente do seu navegador, utilizando o seu Google Drive pessoal como banco de dados.
-***
-## Principais Funcionalidades
-**Mobile First:** Interface pensada para o uso com uma mão, com botões acessíveis e Bottom Sheets.
-
-**Sincronização com Google Drive:** Seus dados não ficam em servidores de terceiros; eles são salvos em um arquivo finance.json na sua própria conta Google.
-
-**Modo Escuro:** Troca de tema inteligente com persistência de preferência.
-
-**Inteligência Financeira:** * Replicação de rendas e despesas fixas para meses futuros.
-
-**Gerenciamento de parcelas (ex: 1/12, 2/12) automático.**
-
-**Privacidade:** Login via Google OAuth2 seguro.
-***
-## Tecnologias Utilizadas
-HTML5 & CSS3: Variáveis CSS e Flexbox/Grid para layout responsivo.
-
-JavaScript (ES6+): Manipulação de DOM, Fetch API e Async/Await.
-
-Google Drive API v3: Persistência de dados em nuvem.
-
-Google Identity Services: Autenticação segura.
-***
-## Como Executar o Projeto
-### Pré-requisitos
-1. Um Client ID do Google Cloud Console (com a API do Drive ativada).
-
-2. Adicionar http://localhost e o endereço do seu site aos "Origens JavaScript autorizadas".
-
-### Instalação e Uso Local
-1. Clone o repositório:
-
-```Bash
-git clone https://github.com/seu-usuario/finance.git
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
-2. Abra o arquivo js/auth.js e insira seu CLIENT_ID.
 
-3. Para testar sem o Google Drive (Modo Debug):
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-  Crie um arquivo finance.json na raiz do projeto com o conteúdo: {"months": {}}.
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-  Execute um servidor local (ex: Live Server do VS Code) para evitar erros de CORS.
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## Estrutura de Arquivos
-```Plaintext
-├── css/
-│   └── style.css      # Estilos e variáveis de tema
-├── js/
-│   ├── auth.js        # Autenticação Google
-│   ├── drive.js       # Comunicação com a API do Drive
-│   ├── storage.js     # Fallback para LocalStorage
-│   └── app.js         # Lógica de negócio e renderização
-├── app.html           # Estrutura principal
-├── index.html         # Tela de login
-└── finance.json       # (Apenas para debug local)
-```
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
