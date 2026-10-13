@@ -317,9 +317,6 @@ export async function atualizarTransacao(
 ) {
   const supabase = await criarSupabase()
 
-  /*
-   * Verifica o usuário logado
-   */
   const {
     data: { user },
     error: usuarioError,
@@ -329,75 +326,73 @@ export async function atualizarTransacao(
     throw new Error('Usuário não autenticado.')
   }
 
-  /*
-   * Validações
-   */
   if (!dados.nome.trim()) {
-    throw new Error(
-      'Informe o nome da transação.'
-    )
+    throw new Error('Informe o nome da transação.')
   }
 
-  if (!dados.valor || dados.valor <= 0) {
-    throw new Error(
-      'O valor deve ser maior que zero.'
-    )
+  if (!Number.isFinite(dados.valor) || dados.valor <= 0) {
+    throw new Error('O valor deve ser maior que zero.')
   }
 
   const mesReferencia = dados.mesReferencia
     .trim()
     .replace(/\s/g, '')
 
-  if (!/^\d{4}-\d{2}$/.test(mesReferencia)) {
-    throw new Error(
-      'Mês de referência inválido.'
-    )
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mesReferencia)) {
+    throw new Error('Mês de referência inválido.')
   }
 
-  /*
-   * Primeiro buscamos a transação para descobrir
-   * se ela pertence a um parcelamento.
-   */
   const { data: transacao, error: buscaError } =
     await supabase
       .from('transacoes')
-      .select(`
-        id,
-        tipo,
-        parcelamento_id
-      `)
+      .select('id, tipo, parcelamento_id, numero_parcela')
       .eq('id', dados.id)
       .eq('usuario_id', user.id)
       .single()
 
   if (buscaError || !transacao) {
-    throw new Error(
-      'Transação não encontrada.'
-    )
+    throw new Error('Transação não encontrada.')
   }
 
-  /*
-   * Por enquanto a edição será permitida apenas
-   * para transações normais.
-   *
-   * Parcelamentos serão tratados na próxima etapa.
-   */
+  let nomeFinal = dados.nome.trim()
+
+  // Preserva a numeração quando a transação é parcelada.
   if (transacao.parcelamento_id) {
-    throw new Error(
-      'Edição de parcelamentos será tratada separadamente.'
-    )
+    const { data: parcelamento, error: parcelamentoError } =
+      await supabase
+        .from('parcelamentos')
+        .select('total_parcelas')
+        .eq('id', transacao.parcelamento_id)
+        .eq('usuario_id', user.id)
+        .single()
+
+    if (
+      parcelamentoError ||
+      !parcelamento ||
+      !transacao.numero_parcela
+    ) {
+      throw new Error(
+        'Não foi possível identificar os dados do parcelamento.'
+      )
+    }
+
+    // Remove um sufixo antigo e reaplica a numeração correta.
+    const nomeBase = nomeFinal.replace(/\s*\(\d+\/\d+\)$/, '')
+
+    if (!nomeBase.trim()) {
+      throw new Error('Informe um nome válido para a transação.')
+    }
+
+    nomeFinal =
+      `${nomeBase} (${transacao.numero_parcela}/${parcelamento.total_parcelas})`
   }
 
-  /*
-   * Atualiza a transação.
-   */
   const { error } = await supabase
     .from('transacoes')
     .update({
-      nome: dados.nome.trim(),
+      nome: nomeFinal,
       valor_estimado: dados.valor,
       mes_referencia: mesReferencia,
-
       categoria_id:
         transacao.tipo === 'despesa'
           ? dados.categoriaId ?? null
@@ -407,11 +402,7 @@ export async function atualizarTransacao(
     .eq('usuario_id', user.id)
 
   if (error) {
-    console.error(
-      'Erro ao atualizar transação:',
-      error
-    )
-
+    console.error('Erro ao atualizar transação:', error)
     throw new Error(
       `Erro ao atualizar transação: ${error.message}`
     )
@@ -419,10 +410,10 @@ export async function atualizarTransacao(
 
   return {
     sucesso: true,
-    mensagem:
-      'Transação atualizada com sucesso.',
+    mensagem: 'Transação atualizada com sucesso.',
   }
 }
+
 /*
  * =====================================================
  * BUSCAR TRANSAÇÕES
