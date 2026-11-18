@@ -31,6 +31,20 @@ As despesas podem ser organizadas em:
 
 **Gerenciamento de parcelas:**
 Compras parceladas são distribuídas automaticamente entre os meses, identificadas como `1/12`, `2/12`, `3/12` etc.
+O valor é dividido em centavos inteiros: os centavos excedentes ficam nas primeiras parcelas (R$ 100,00 em 3x → R$ 33,34 + R$ 33,33 + R$ 33,33), e a soma é sempre igual ao total.
+
+A tela **Parcelamentos** (`/parcelamentos`) separa os parcelamentos ativos dos finalizados e mostra, para cada um, o valor total, o valor da parcela, as parcelas pagas e pendentes, o valor restante, a próxima parcela e o progresso. Ao abrir um parcelamento, as parcelas aparecem uma a uma, organizadas por mês.
+
+**Controle de pagamento:**
+Cada parcela pode ser marcada como paga (com data de pagamento registrada) ou ter o pagamento desfeito, mediante confirmação. Uma parcela pendente cujo mês já terminou aparece como **vencida**. Registros anteriores a esse controle aparecem como **sem status**: o sistema não presume que foram pagos.
+
+**Edição e exclusão de parcelas:**
+- *Somente esta parcela:* altera apenas a parcela escolhida.
+- *Esta e as próximas:* altera a parcela e as seguintes, preservando as que já foram pagas. Pede confirmação antes de executar.
+- *Excluir somente esta parcela:* permitido para parcelas não pagas.
+- *Excluir o parcelamento inteiro:* remove todas as parcelas, após confirmação.
+
+Essas operações rodam como funções no PostgreSQL (RPC), em uma única transação.
 
 **Edição de transações:**
 Permite alterar informações de transações já cadastradas, como nome, valor, categoria e mês de referência.
@@ -77,7 +91,17 @@ Cada usuário possui seus próprios registros financeiros. O Supabase Row Level 
 * **Row Level Security (RLS)**
 * Políticas baseadas no usuário autenticado através de `auth.uid()`
 
-### Deploy
+### Testes
+
+```bash
+npm test
+```
+
+Os testes unitários (Vitest) cobrem a distribuição de parcelas em centavos, a aritmética de meses, a máscara monetária e o resumo dos parcelamentos (pagas, pendentes, vencidas, restante, próxima parcela e registros antigos).
+
+---
+
+## Deploy
 
 * **Vercel**
 
@@ -125,6 +149,8 @@ Principais tabelas:
     │ categoria_id      │
     │ parcelamento_id   │
     │ numero_parcela    │
+    │ status_pagamento  │
+    │ pago_em           │
     └───────────────────┘
 ```
 
@@ -207,7 +233,21 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sua_chave_publishable
 
 ---
 
-### 4. Execute o projeto
+### 4. Aplique as migrations do banco
+
+As migrations ficam em `supabase/migrations/`. Antes de aplicá-las, rode `supabase/diagnostico_esquema.sql` no SQL Editor (somente leitura) e confira o esquema.
+
+```bash
+supabase db push
+```
+
+Ou cole o conteúdo de cada migration, em ordem, no SQL Editor do Supabase.
+
+A migration da FASE 1 verifica o esquema antes de alterar qualquer coisa e aborta se encontrar divergências. Ela não remove colunas nem altera políticas de RLS. As instruções de rollback estão no final do arquivo.
+
+---
+
+### 5. Execute o projeto
 
 ```bash
 npm run dev
@@ -266,10 +306,22 @@ finance-app/
 │   │       └── 📄 route.ts
 │   │
 │   ├── 📁 components/
-│   │   └── 📄 TransactionModal.tsx
+│   │   ├── 📄 TransactionModal.tsx
+│   │   ├── 📄 ConfirmDialog.tsx
+│   │   ├── 📄 Toast.tsx
+│   │   ├── 📄 Icon.tsx
+│   │   ├── 📄 BadgeSituacao.tsx
+│   │   └── 📄 useOperacoesTransacao.tsx
 │   │
 │   ├── 📁 lib/
-│   │   └── 📄 supabase.ts
+│   │   ├── 📄 supabase.ts
+│   │   ├── 📄 money.ts
+│   │   ├── 📄 meses.ts
+│   │   ├── 📄 parcelamentos.ts
+│   │   └── 📄 types.ts
+│   │
+│   ├── 📁 parcelamentos/
+│   │   └── 📄 page.tsx
 │   │
 │   ├── 📁 login/
 │   │   └── 📄 page.tsx
@@ -279,6 +331,12 @@ finance-app/
 │   ├── 🎨 globals.css
 │   ├── 📄 layout.tsx
 │   └── 📄 page.tsx
+│
+├── 📁 supabase/
+│   ├── 📁 migrations/
+│   └── 📄 diagnostico_esquema.sql
+│
+├── 📁 tests/
 │
 ├── 📄 proxy.ts
 ├── 📄 .env.local
@@ -357,7 +415,8 @@ Funcionalidades atuais:
 * [x] Row Level Security
 * [x] Interface responsiva
 * [ ] Valor estimado x valor realizado
-* [ ] Melhorias no gerenciamento de parcelamentos
+* [x] Melhorias no gerenciamento de parcelamentos
+* [x] Controle de pagamento de parcelas
 * [ ] Deploy em produção
 
 ---

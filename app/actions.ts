@@ -2,6 +2,14 @@
 
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { normalizarMes } from '@/app/lib/meses'
+import { MAX_CENTAVOS, centavosParaReais, distribuirParcelas, formatarCentavos } from '@/app/lib/money'
+import type {
+  EscopoEdicao,
+  ParcelamentoComParcelas,
+  TipoTransacao,
+  Transacao,
+} from '@/app/lib/types'
 
 async function criarSupabase() {
   const cookieStore = await cookies()
@@ -29,550 +37,556 @@ async function criarSupabase() {
   )
 }
 
+/*
+ * =====================================================
+ * INFRAESTRUTURA
+ * =====================================================
+ *
+ * Mutações retornam um Resultado em vez de lançar exceção: em produção
+ * o Next.js oculta a mensagem de erros lançados por Server Actions, e o
+ * usuário veria apenas um erro genérico.
+ */
+
+export type Resultado<T = undefined> =
+  | { ok: true; mensagem: string; dados?: T }
+  | { ok: false; erro: string }
+
+class ErroValidacao extends Error {}
+
+interface ErroBanco {
+  code?: string
+  message: string
+}
+
+const MAX_PARCELAS = 120
+
+const SELECT_TRANSACAO_BASE = `
+  id,
+  nome,
+  mes_referencia,
+  valor_estimado,
+  valor_real,
+  tipo,
+  categoria_id,
+  parcelamento_id,
+  numero_parcela,
+  created_at
+`
+
+const SELECT_TRANSACAO = `${SELECT_TRANSACAO_BASE}, status_pagamento, pago_em`
+
+/** Coluna inexistente: a migration da FASE 1 ainda não foi aplicada. */
+function colunaInexistente(error: ErroBanco) {
+  return error.code === '42703' || /status_pagamento|pago_em|valor_contratado/.test(error.message)
+}
+
+/** Função RPC inexistente. */
+function funcaoInexistente(error: ErroBanco) {
+  return error.code === '42883' || error.code === 'PGRST202'
+}
+
+/** Traduz erros do banco para mensagens seguras de exibir. */
+function mensagemDoBanco(error: ErroBanco, padrao: string) {
+  console.error(padrao, error)
+
+  if (funcaoInexistente(error) || colunaInexistente(error)) {
+    return 'O banco de dados está desatualizado. Aplique a migration da FASE 1 no Supabase.'
+  }
+
+  // Erros de regra de negócio lançados pelas funções RPC (raise exception
+  // com errcode 22023) já têm mensagem pensada para o usuário.
+  if (error.code === '22023' || error.code === 'P0002') {
+    return error.message
+  }
+
+  // numeric_value_out_of_range: soma acima do limite de numeric(10,2).
+  if (error.code === '22003') {
+    return `O valor excede o limite de ${formatarCentavos(MAX_CENTAVOS)}.`
+  }
+
+  // foreign_key_violation: referência a parcelamento inexistente ou de
+  // outro usuário (FK composta parcelamento_id + usuario_id).
+  if (error.code === '23503') {
+    return 'Parcelamento ou categoria não encontrado.'
+  }
+
+  return padrao
+}
+
+async function executar<T>(
+  operacao: () => Promise<Resultado<T>>,
+  padrao: string
+): Promise<Resultado<T>> {
+  try {
+    return await operacao()
+  } catch (error) {
+    if (error instanceof ErroValidacao) {
+      return { ok: false, erro: error.message }
+    }
+
+    console.error(padrao, error)
+    return { ok: false, erro: padrao }
+  }
+}
+
+async function obterContexto() {
+  const supabase = await criarSupabase()
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser()
+
+  if (error || !user) {
+    throw new ErroValidacao('Sua sessão expirou. Entre novamente.')
+  }
+
+  return { supabase, user }
+}
+
+function validarNome(nome: string) {
+  const limpo = nome.trim()
+
+  if (!limpo) {
+    throw new ErroValidacao('Informe o nome da transação.')
+  }
+
+  if (limpo.length > 120) {
+    throw new ErroValidacao('O nome deve ter no máximo 120 caracteres.')
+  }
+
+  return limpo
+}
+
+function validarCentavos(valorCentavos: number) {
+  if (!Number.isInteger(valorCentavos) || valorCentavos <= 0) {
+    throw new ErroValidacao('O valor deve ser maior que zero.')
+  }
+
+  if (valorCentavos > MAX_CENTAVOS) {
+    throw new ErroValidacao(`O valor máximo é ${formatarCentavos(MAX_CENTAVOS)}.`)
+  }
+
+  return valorCentavos
+}
+
+function validarMes(mes: string) {
+  const normalizado = normalizarMes(mes)
+
+  if (!normalizado) {
+    throw new ErroValidacao('Mês de referência inválido.')
+  }
+
+  return normalizado
+}
+
+function validarCategoria(tipo: TipoTransacao, categoriaId?: number) {
+  if (tipo !== 'despesa') {
+    return null
+  }
+
+  if (categoriaId === undefined || ![1, 2, 3].includes(categoriaId)) {
+    throw new ErroValidacao('Selecione uma categoria.')
+  }
+
+  return categoriaId
+}
+
+/*
+ * =====================================================
+ * ADICIONAR TRANSAÇÃO
+ * =====================================================
+ */
+
 interface NovaTransacao {
   nome: string
-  valor: number
+  /** Valor TOTAL em centavos inteiros. */
+  valorCentavos: number
   mesReferencia: string
-  tipo: 'receita' | 'despesa'
+  tipo: TipoTransacao
   categoriaId?: number
   parcelas?: number
 }
 
-
-/*
- * ADICIONAR TRANSAÇÃO
- */
 export async function adicionarTransacao(
   dados: NovaTransacao
-) {
-  const supabase = await criarSupabase()
+): Promise<Resultado<{ parcelamentoId?: string }>> {
+  return executar(async () => {
+    const { supabase, user } = await obterContexto()
 
-  /*
-   * Verifica o usuário logado
-   */
-  const {
-    data: { user },
-    error: usuarioError,
-  } = await supabase.auth.getUser()
+    if (dados.tipo !== 'receita' && dados.tipo !== 'despesa') {
+      throw new ErroValidacao('Tipo de transação inválido.')
+    }
 
-  if (usuarioError || !user) {
-    throw new Error('Usuário não autenticado.')
-  }
+    const nome = validarNome(dados.nome)
+    const totalCentavos = validarCentavos(dados.valorCentavos)
+    const mesReferencia = validarMes(dados.mesReferencia)
+    const categoriaId = validarCategoria(dados.tipo, dados.categoriaId)
+    const quantidade = dados.parcelas ?? 1
 
-  /*
-   * Validações
-   */
-  if (!dados.nome.trim()) {
-    throw new Error('Informe o nome da transação.')
-  }
+    if (!Number.isInteger(quantidade) || quantidade < 1 || quantidade > MAX_PARCELAS) {
+      throw new ErroValidacao(`A quantidade de parcelas deve ser entre 2 e ${MAX_PARCELAS}.`)
+    }
 
-  if (!dados.valor || dados.valor <= 0) {
-    throw new Error('O valor deve ser maior que zero.')
-  }
-
-  /*
-   * Remove espaços do mês.
-   *
-   * Exemplo:
-   * "2026 -09 " → "2026-09"
-   */
-  const mesReferencia = dados.mesReferencia
-    .trim()
-    .replace(/\s/g, '')
-
-  /*
-   * Confere se o mês está no formato YYYY-MM.
-   */
-  if (!/^\d{4}-\d{2}$/.test(mesReferencia)) {
-    throw new Error(
-      'Mês de referência inválido.'
-    )
-  }
-
-  const quantidadeParcelas = dados.parcelas ?? 1
-
-  if (
-    !Number.isInteger(quantidadeParcelas) ||
-    quantidadeParcelas < 1
-  ) {
-    throw new Error(
-      'Quantidade de parcelas inválida.'
-    )
-  }
-
-
-  /*
-   * =====================================================
-   * TRANSAÇÃO NORMAL
-   * =====================================================
-   */
-  if (quantidadeParcelas === 1) {
-    const { error } = await supabase
-      .from('transacoes')
-      .insert({
+    /*
+     * Transação simples
+     */
+    if (quantidade === 1) {
+      const { error } = await supabase.from('transacoes').insert({
         usuario_id: user.id,
-        nome: dados.nome.trim(),
+        nome,
         mes_referencia: mesReferencia,
-        valor_estimado: dados.valor,
+        valor_estimado: centavosParaReais(totalCentavos),
         tipo: dados.tipo,
-
-        categoria_id:
-          dados.tipo === 'despesa'
-            ? dados.categoriaId ?? null
-            : null,
-
+        categoria_id: categoriaId,
         parcelamento_id: null,
         numero_parcela: null,
       })
 
-    if (error) {
-      console.error(
-        'Erro ao adicionar transação:',
-        error
-      )
+      if (error) {
+        return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível salvar a transação.') }
+      }
 
-      throw new Error(
-        `Erro do Supabase: ${error.message}`
-      )
+      return {
+        ok: true,
+        mensagem: dados.tipo === 'receita' ? 'Receita adicionada.' : 'Despesa adicionada.',
+      }
+    }
+
+    /*
+     * Parcelamento
+     *
+     * A distribuição é feita em centavos inteiros (sem perda) e o
+     * parcelamento + parcelas são criados em uma única transação no
+     * banco (RPC criar_parcelamento).
+     */
+    if (dados.tipo !== 'despesa') {
+      throw new ErroValidacao('Somente despesas podem ser parceladas.')
+    }
+
+    if (quantidade > totalCentavos) {
+      throw new ErroValidacao('O valor total é pequeno demais para essa quantidade de parcelas.')
+    }
+
+    const valores = distribuirParcelas(totalCentavos, quantidade).map(centavosParaReais)
+
+    const { data, error } = await supabase.rpc('criar_parcelamento', {
+      p_nome: nome,
+      p_tipo: dados.tipo,
+      p_categoria_id: categoriaId,
+      p_mes_inicio: mesReferencia,
+      p_valores: valores,
+    })
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível criar o parcelamento.') }
     }
 
     return {
-      sucesso: true,
-      mensagem:
-        'Transação adicionada com sucesso.',
+      ok: true,
+      mensagem: `Parcelamento criado em ${quantidade} parcelas.`,
+      dados: { parcelamentoId: data as string },
     }
-  }
-
-
-  /*
-   * =====================================================
-   * PARCELAMENTO
-   * =====================================================
-   *
-   * Exemplo:
-   *
-   * valor = 1200
-   * parcelas = 3
-   *
-   * parcela = 1200 / 3 = 400
-   *
-   * Resultado:
-   *
-   * 1/3 → 2026-09 → 400
-   * 2/3 → 2026-10 → 400
-   * 3/3 → 2026-11 → 400
-   */
-
-  const valorPorParcela =
-    dados.valor / quantidadeParcelas
-
-  /*
-   * Arredonda para evitar problemas de casas decimais.
-   *
-   * Exemplo:
-   * 100 / 3 = 33.333333...
-   *
-   * Vai para:
-   * 33.33
-   */
-  const valorParcela = Number(
-    valorPorParcela.toFixed(2)
-  )
-
-
-  /*
-   * Cria o registro principal do parcelamento.
-   */
-  const { data: parcelamento, error: parcelamentoError } =
-    await supabase
-      .from('parcelamentos')
-      .insert({
-        usuario_id: user.id,
-        nome: dados.nome.trim(),
-        total_parcelas: quantidadeParcelas,
-        valor_total: dados.valor,
-      })
-      .select('id')
-      .single()
-
-  if (parcelamentoError || !parcelamento) {
-    console.error(
-      'Erro ao criar parcelamento:',
-      parcelamentoError
-    )
-
-    throw new Error(
-      `Erro ao criar parcelamento: ${parcelamentoError?.message ??
-      'registro não criado'
-      }`
-    )
-  }
-
-
-  /*
-   * Monta todas as parcelas.
-   */
-  const transacoes = []
-
-  for (let i = 0; i < quantidadeParcelas; i++) {
-    /*
-     * Começa no primeiro dia do mês escolhido.
-     *
-     * O horário 12:00 evita problemas de mudança
-     * de horário/DST.
-     */
-    const dataParcela = new Date(
-      `${mesReferencia}-01T12:00:00`
-    )
-
-    /*
-     * Avança um mês para cada parcela.
-     */
-    dataParcela.setMonth(
-      dataParcela.getMonth() + i
-    )
-
-    /*
-     * Converte novamente para YYYY-MM.
-     */
-    const mesParcela = `${dataParcela.getFullYear()}-${String(
-      dataParcela.getMonth() + 1
-    ).padStart(2, '0')}`
-
-    transacoes.push({
-      usuario_id: user.id,
-
-      nome: `${dados.nome.trim()} (${i + 1}/${quantidadeParcelas})`,
-
-      mes_referencia: mesParcela,
-
-      valor_estimado: valorParcela,
-
-      tipo: dados.tipo,
-
-      categoria_id:
-        dados.tipo === 'despesa'
-          ? dados.categoriaId ?? null
-          : null,
-
-      parcelamento_id: parcelamento.id,
-
-      numero_parcela: i + 1,
-    })
-  }
-
-
-  /*
-   * Insere todas as parcelas de uma vez.
-   */
-  const { error: transacoesError } =
-    await supabase
-      .from('transacoes')
-      .insert(transacoes)
-
-  /*
-   * Se falhar ao criar as transações,
-   * remove o parcelamento que acabamos de criar.
-   */
-  if (transacoesError) {
-    console.error(
-      'Erro ao criar parcelas:',
-      transacoesError
-    )
-
-    await supabase
-      .from('parcelamentos')
-      .delete()
-      .eq('id', parcelamento.id)
-
-    throw new Error(
-      `Erro ao criar parcelas: ${transacoesError.message}`
-    )
-  }
-
-
-  return {
-    sucesso: true,
-
-    mensagem:
-      `${quantidadeParcelas} parcelas criadas com sucesso.`,
-
-    parcelamentoId: parcelamento.id,
-  }
+  }, 'Não foi possível salvar a transação.')
 }
 
 /*
  * =====================================================
  * ATUALIZAR TRANSAÇÃO
  * =====================================================
+ *
+ * - Transação simples: atualiza o próprio registro.
+ * - Parcela: usa a RPC editar_parcela com escopo explícito:
+ *     'unica'   → somente esta parcela
+ *     'futuras' → esta e as próximas não pagas
  */
+
+interface AtualizacaoTransacao {
+  id: string
+  nome: string
+  valorCentavos: number
+  mesReferencia: string
+  categoriaId?: number
+  escopo?: EscopoEdicao
+}
+
 export async function atualizarTransacao(
-  dados: {
-    id: string
-    nome: string
-    valor: number
-    mesReferencia: string
-    categoriaId?: number
-  }
-) {
-  const supabase = await criarSupabase()
+  dados: AtualizacaoTransacao
+): Promise<Resultado<{ afetadas: number }>> {
+  return executar(async () => {
+    const { supabase, user } = await obterContexto()
 
-  const {
-    data: { user },
-    error: usuarioError,
-  } = await supabase.auth.getUser()
+    const nome = validarNome(dados.nome)
+    const valorCentavos = validarCentavos(dados.valorCentavos)
+    const mesReferencia = validarMes(dados.mesReferencia)
 
-  if (usuarioError || !user) {
-    throw new Error('Usuário não autenticado.')
-  }
-
-  if (!dados.nome.trim()) {
-    throw new Error('Informe o nome da transação.')
-  }
-
-  if (!Number.isFinite(dados.valor) || dados.valor <= 0) {
-    throw new Error('O valor deve ser maior que zero.')
-  }
-
-  const mesReferencia = dados.mesReferencia
-    .trim()
-    .replace(/\s/g, '')
-
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mesReferencia)) {
-    throw new Error('Mês de referência inválido.')
-  }
-
-  const { data: transacao, error: buscaError } =
-    await supabase
+    const { data: transacao, error: buscaError } = await supabase
       .from('transacoes')
-      .select('id, tipo, parcelamento_id, numero_parcela')
+      .select('id, tipo, parcelamento_id')
       .eq('id', dados.id)
       .eq('usuario_id', user.id)
       .single()
 
-  if (buscaError || !transacao) {
-    throw new Error('Transação não encontrada.')
-  }
-
-  let nomeFinal = dados.nome.trim()
-
-  // Preserva a numeração quando a transação é parcelada.
-  if (transacao.parcelamento_id) {
-    const { data: parcelamento, error: parcelamentoError } =
-      await supabase
-        .from('parcelamentos')
-        .select('total_parcelas')
-        .eq('id', transacao.parcelamento_id)
-        .eq('usuario_id', user.id)
-        .single()
-
-    if (
-      parcelamentoError ||
-      !parcelamento ||
-      !transacao.numero_parcela
-    ) {
-      throw new Error(
-        'Não foi possível identificar os dados do parcelamento.'
-      )
+    if (buscaError || !transacao) {
+      return { ok: false, erro: 'Transação não encontrada.' }
     }
 
-    // Remove um sufixo antigo e reaplica a numeração correta.
-    const nomeBase = nomeFinal.replace(/\s*\(\d+\/\d+\)$/, '')
+    const categoriaId = validarCategoria(transacao.tipo, dados.categoriaId)
 
-    if (!nomeBase.trim()) {
-      throw new Error('Informe um nome válido para a transação.')
+    if (transacao.parcelamento_id) {
+      const escopo: EscopoEdicao = dados.escopo ?? 'unica'
+
+      const { data, error } = await supabase.rpc('editar_parcela', {
+        p_transacao_id: dados.id,
+        p_escopo: escopo,
+        p_nome: nome,
+        p_valor: centavosParaReais(valorCentavos),
+        p_mes: mesReferencia,
+        p_categoria_id: categoriaId,
+      })
+
+      if (error) {
+        return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível atualizar a parcela.') }
+      }
+
+      const afetadas = Number(data ?? 0)
+
+      return {
+        ok: true,
+        mensagem:
+          escopo === 'unica'
+            ? 'Parcela atualizada.'
+            : `${afetadas} ${afetadas === 1 ? 'parcela atualizada' : 'parcelas atualizadas'}.`,
+        dados: { afetadas },
+      }
     }
 
-    nomeFinal =
-      `${nomeBase} (${transacao.numero_parcela}/${parcelamento.total_parcelas})`
-  }
+    const { error } = await supabase
+      .from('transacoes')
+      .update({
+        nome,
+        valor_estimado: centavosParaReais(valorCentavos),
+        mes_referencia: mesReferencia,
+        categoria_id: categoriaId,
+      })
+      .eq('id', dados.id)
+      .eq('usuario_id', user.id)
 
-  const { error } = await supabase
-    .from('transacoes')
-    .update({
-      nome: nomeFinal,
-      valor_estimado: dados.valor,
-      mes_referencia: mesReferencia,
-      categoria_id:
-        transacao.tipo === 'despesa'
-          ? dados.categoriaId ?? null
-          : null,
-    })
-    .eq('id', dados.id)
-    .eq('usuario_id', user.id)
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível atualizar a transação.') }
+    }
 
-  if (error) {
-    console.error('Erro ao atualizar transação:', error)
-    throw new Error(
-      `Erro ao atualizar transação: ${error.message}`
-    )
-  }
-
-  return {
-    sucesso: true,
-    mensagem: 'Transação atualizada com sucesso.',
-  }
+    return { ok: true, mensagem: 'Transação atualizada.', dados: { afetadas: 1 } }
+  }, 'Não foi possível atualizar a transação.')
 }
 
 /*
  * =====================================================
- * BUSCAR TRANSAÇÕES
+ * BUSCAR TRANSAÇÕES DO MÊS
  * =====================================================
  */
-export async function buscarTransacoes(
-  mesReferencia: string
-) {
-  const supabase = await criarSupabase()
+export async function buscarTransacoes(mesReferencia: string): Promise<Transacao[]> {
+  const { supabase, user } = await obterContexto()
+  const mes = normalizarMes(mesReferencia)
 
-  const {
-    data: { user },
-    error: usuarioError,
-  } = await supabase.auth.getUser()
-
-  if (usuarioError || !user) {
-    throw new Error('Usuário não autenticado.')
+  if (!mes) {
+    throw new Error('Mês de referência inválido.')
   }
 
-  const mes = mesReferencia
-    .trim()
-    .replace(/\s/g, '')
+  const consulta = (campos: string) =>
+    supabase
+      .from('transacoes')
+      .select(campos)
+      .eq('usuario_id', user.id)
+      .eq('mes_referencia', mes)
+      .order('created_at', { ascending: false })
 
-  const { data, error } = await supabase
-    .from('transacoes')
-    .select(`
-      id,
-      nome,
-      mes_referencia,
-      valor_estimado,
-      valor_real,
-      tipo,
-      categoria_id,
-      parcelamento_id,
-      numero_parcela,
-      created_at
-    `)
-    .eq('usuario_id', user.id)
-    .eq('mes_referencia', mes)
-    .order('created_at', {
-      ascending: false,
-    })
+  const { data, error } = await consulta(SELECT_TRANSACAO)
 
-  if (error) {
-    console.error(
-      'Erro ao buscar transações:',
-      error
-    )
-
-    throw new Error(
-      `Erro ao buscar transações: ${error.message}`
-    )
-  }
-
-  return data ?? []
-}
-
-
-/*
- * =====================================================
- * EXCLUIR TRANSAÇÃO
- * =====================================================
- */
-export async function excluirTransacao(
-  id: string
-) {
-  const supabase = await criarSupabase()
-
-  const {
-    data: { user },
-    error: usuarioError,
-  } = await supabase.auth.getUser()
-
-  if (usuarioError || !user) {
-    throw new Error('Usuário não autenticado.')
+  if (!error) {
+    return (data ?? []) as unknown as Transacao[]
   }
 
   /*
-   * Busca a transação primeiro para descobrir
-   * se ela pertence a um parcelamento.
+   * Compatibilidade: se a migration ainda não foi aplicada, a consulta
+   * com as colunas novas falha. Buscamos sem elas e tratamos como
+   * "sem status" — o app continua funcionando como antes.
    */
-  const { data: transacao, error: buscaError } =
-    await supabase
+  if (colunaInexistente(error)) {
+    const legado = await consulta(SELECT_TRANSACAO_BASE)
+
+    if (!legado.error) {
+      return ((legado.data ?? []) as unknown as Transacao[]).map((t) => ({
+        ...t,
+        status_pagamento: null,
+        pago_em: null,
+      }))
+    }
+  }
+
+  console.error('Erro ao buscar transações:', error)
+  throw new Error('Não foi possível carregar suas transações.')
+}
+
+/*
+ * =====================================================
+ * BUSCAR PARCELAMENTOS
+ * =====================================================
+ */
+export async function buscarParcelamentos(): Promise<ParcelamentoComParcelas[]> {
+  const { supabase, user } = await obterContexto()
+
+  const { data, error } = await supabase
+    .from('parcelamentos')
+    .select(`
+      id,
+      nome,
+      total_parcelas,
+      valor_total,
+      valor_contratado,
+      parcelas:transacoes!transacoes_parcelamento_usuario_fkey (
+        id,
+        nome,
+        mes_referencia,
+        valor_estimado,
+        valor_real,
+        tipo,
+        categoria_id,
+        numero_parcela,
+        status_pagamento,
+        pago_em
+      )
+    `)
+    .eq('usuario_id', user.id)
+
+  if (error) {
+    console.error('Erro ao buscar parcelamentos:', error)
+
+    throw new Error(
+      colunaInexistente(error)
+        ? 'O banco de dados está desatualizado. Aplique a migration da FASE 1 no Supabase.'
+        : 'Não foi possível carregar seus parcelamentos.'
+    )
+  }
+
+  return (data ?? []) as unknown as ParcelamentoComParcelas[]
+}
+
+/*
+ * =====================================================
+ * PAGAMENTO
+ * =====================================================
+ */
+export async function definirPagamento(
+  id: string,
+  pago: boolean
+): Promise<Resultado<{ pagoEm: string | null }>> {
+  return executar(async () => {
+    const { supabase, user } = await obterContexto()
+
+    const pagoEm = pago ? new Date().toISOString() : null
+
+    const { data, error } = await supabase
+      .from('transacoes')
+      .update({
+        status_pagamento: pago ? 'pago' : 'pendente',
+        pago_em: pagoEm,
+      })
+      .eq('id', id)
+      .eq('usuario_id', user.id)
+      .select('id')
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível atualizar o pagamento.') }
+    }
+
+    if (!data || data.length === 0) {
+      return { ok: false, erro: 'Transação não encontrada.' }
+    }
+
+    return {
+      ok: true,
+      mensagem: pago ? 'Marcada como paga.' : 'Pagamento desfeito.',
+      dados: { pagoEm },
+    }
+  }, 'Não foi possível atualizar o pagamento.')
+}
+
+/*
+ * =====================================================
+ * EXCLUSÃO
+ * =====================================================
+ */
+
+/** Exclui uma transação simples (não parcelada). */
+export async function excluirTransacao(id: string): Promise<Resultado> {
+  return executar(async () => {
+    const { supabase, user } = await obterContexto()
+
+    const { data: transacao, error: buscaError } = await supabase
       .from('transacoes')
       .select('id, parcelamento_id')
       .eq('id', id)
       .eq('usuario_id', user.id)
       .single()
 
-  if (buscaError || !transacao) {
-    throw new Error(
-      'Transação não encontrada.'
-    )
-  }
+    if (buscaError || !transacao) {
+      return { ok: false, erro: 'Transação não encontrada.' }
+    }
 
+    // Parcelas nunca são excluídas por aqui: use excluirParcela ou
+    // excluirParcelamento, que deixam a intenção explícita.
+    if (transacao.parcelamento_id) {
+      return { ok: false, erro: 'Esta transação é uma parcela. Escolha como deseja excluí-la.' }
+    }
 
-  /*
-   * Se pertence a um parcelamento,
-   * excluímos o parcelamento inteiro.
-   *
-   * Como existe:
-   *
-   * ON DELETE CASCADE
-   *
-   * todas as parcelas serão excluídas
-   * automaticamente.
-   */
-  if (transacao.parcelamento_id) {
     const { error } = await supabase
-      .from('parcelamentos')
+      .from('transacoes')
       .delete()
-      .eq(
-        'id',
-        transacao.parcelamento_id
-      )
+      .eq('id', id)
       .eq('usuario_id', user.id)
 
     if (error) {
-      console.error(
-        'Erro ao excluir parcelamento:',
-        error
-      )
-
-      throw new Error(
-        `Erro ao excluir parcelamento: ${error.message}`
-      )
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível excluir a transação.') }
     }
+
+    return { ok: true, mensagem: 'Transação excluída.' }
+  }, 'Não foi possível excluir a transação.')
+}
+
+/** Exclui somente uma parcela (não paga). */
+export async function excluirParcela(id: string): Promise<Resultado> {
+  return executar(async () => {
+    const { supabase } = await obterContexto()
+
+    const { error } = await supabase.rpc('excluir_parcela', { p_transacao_id: id })
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível excluir a parcela.') }
+    }
+
+    return { ok: true, mensagem: 'Parcela excluída.' }
+  }, 'Não foi possível excluir a parcela.')
+}
+
+/** Exclui o parcelamento inteiro e todas as suas parcelas. */
+export async function excluirParcelamento(parcelamentoId: string): Promise<Resultado> {
+  return executar(async () => {
+    const { supabase } = await obterContexto()
+
+    const { data, error } = await supabase.rpc('excluir_parcelamento', {
+      p_parcelamento_id: parcelamentoId,
+    })
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível excluir o parcelamento.') }
+    }
+
+    const excluidas = Number(data ?? 0)
 
     return {
-      sucesso: true,
-      mensagem:
-        'Parcelamento excluído com sucesso.',
+      ok: true,
+      mensagem: `Parcelamento excluído (${excluidas} ${excluidas === 1 ? 'parcela' : 'parcelas'}).`,
     }
-  }
-
-
-  /*
-   * Transação normal.
-   */
-  const { error } = await supabase
-    .from('transacoes')
-    .delete()
-    .eq('id', id)
-    .eq('usuario_id', user.id)
-
-  if (error) {
-    console.error(
-      'Erro ao excluir transação:',
-      error
-    )
-
-    throw new Error(
-      `Erro ao excluir transação: ${error.message}`
-    )
-  }
-
-  return {
-    sucesso: true,
-    mensagem:
-      'Transação excluída com sucesso.',
-  }
+  }, 'Não foi possível excluir o parcelamento.')
 }

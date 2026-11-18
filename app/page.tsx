@@ -1,413 +1,275 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import TransactionModal from '@/app/components/TransactionModal';
-import { buscarTransacoes, excluirTransacao } from '@/app/actions';
-
-interface Transacao {
-  id: string;
-  nome: string;
-  mes_referencia: string;
-  valor_estimado: number;
-  valor_real: number | null;
-  tipo: 'receita' | 'despesa';
-  categoria_id: number | null;
-  parcelamento_id: string | null;
-  numero_parcela: number | null;
-  created_at: string;
-}
-
-type IconName =
-  | 'wallet' | 'user' | 'trending-up' | 'trending-down'
-  | 'arrow-down-left' | 'arrow-up-right' | 'chevron-left'
-  | 'chevron-right' | 'receipt' | 'pencil' | 'trash' | 'plus';
-
-function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  const common = {
-    width: size,
-    height: size,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.8,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    'aria-hidden': true as const,
-  };
-
-  switch (name) {
-    case 'wallet':
-      return <svg {...common}><rect x="3" y="5" width="18" height="15" rx="3" /><path d="M3 9h18" /><path d="M16 14h2" /></svg>;
-    case 'user':
-      return <svg {...common}><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>;
-    case 'trending-up':
-      return <svg {...common}><path d="m3 17 6-6 4 4 8-8" /><path d="M15 7h6v6" /></svg>;
-    case 'trending-down':
-      return <svg {...common}><path d="m3 7 6 6 4-4 8 8" /><path d="M15 17h6v-6" /></svg>;
-    case 'arrow-down-left':
-      return <svg {...common}><path d="M17 7 7 17" /><path d="M17 17H7V7" /></svg>;
-    case 'arrow-up-right':
-      return <svg {...common}><path d="M7 17 17 7" /><path d="M7 7h10v10" /></svg>;
-    case 'chevron-left':
-      return <svg {...common}><path d="m15 18-6-6 6-6" /></svg>;
-    case 'chevron-right':
-      return <svg {...common}><path d="m9 18 6-6-6-6" /></svg>;
-    case 'receipt':
-      return <svg {...common}><path d="M5 3 7 4.5 9 3l3 1.5L15 3l2 1.5L19 3v18l-2-1.5-2 1.5-3-1.5L9 21l-2-1.5L5 21z" /><path d="M8.5 9h7M8.5 13h7M8.5 17h4" /></svg>;
-    case 'pencil':
-      return <svg {...common}><path d="m15 5 4 4" /><path d="M4 20l4.2-.8L19 8.4a2.1 2.1 0 0 0-3-3L5.2 16.2 4 20Z" /></svg>;
-    case 'trash':
-      return <svg {...common}><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 14h11l1-14M9 7V4h6v3" /></svg>;
-    case 'plus':
-      return <svg {...common}><path d="M12 5v14M5 12h14" /></svg>;
-  }
-}
+import Icon from '@/app/components/Icon';
+import Toast, { useToast } from '@/app/components/Toast';
+import { formatarDataPagamento, useOperacoesTransacao } from '@/app/components/useOperacoesTransacao';
+import { buscarTransacoes } from '@/app/actions';
+import { adicionarMeses, formatarMes, mesCorrente, normalizarMes } from '@/app/lib/meses';
+import { formatarCentavos, reaisParaCentavos } from '@/app/lib/money';
+import { situacaoParcela } from '@/app/lib/parcelamentos';
+import BadgeSituacao from '@/app/components/BadgeSituacao';
+import { nomeCategoria, type TipoTransacao, type Transacao } from '@/app/lib/types';
 
 function CategoryProgress({
   title,
-  value,
+  valueCentavos,
   percentage,
   color,
-  formatarMoeda,
-  larguraBarra,
 }: {
   title: string;
-  value: number;
+  valueCentavos: number;
   percentage: number;
   color: string;
-  formatarMoeda: (value: number) => string;
-  larguraBarra: (value: number) => number;
 }) {
   return (
     <div>
       <div className="mb-2 flex items-end justify-between gap-3">
         <span className="text-sm font-semibold">{title}</span>
         <div className="text-right">
-          <p className="text-sm font-bold tabular-nums">{formatarMoeda(value)}</p>
+          <p className="text-sm font-bold tabular-nums">{formatarCentavos(valueCentavos)}</p>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">{percentage.toFixed(1)}% da receita</p>
         </div>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-        <div className={`h-full rounded-full ${color} transition-all`} style={{ width: `${larguraBarra(percentage)}%` }} />
+      <div
+        className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
+        role="progressbar"
+        aria-label={`${title}: ${percentage.toFixed(1)}% da receita`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(Math.min(percentage, 100))}
+      >
+        <div className={`h-full rounded-full ${color} transition-all`} style={{ width: `${Math.min(percentage, 100)}%` }} />
       </div>
     </div>
   );
 }
 
-interface Transacao {
-  id: string;
-  nome: string;
-  mes_referencia: string;
-  valor_estimado: number;
-  valor_real: number | null;
-  tipo: 'receita' | 'despesa';
-  categoria_id: number | null;
-  parcelamento_id: string | null;
-  numero_parcela: number | null;
-  created_at: string;
+/** Extrai o total de parcelas do sufixo "(3/12)" do nome (apenas exibição). */
+function totalDoNome(nome: string): number | undefined {
+  const correspondencia = nome.match(/\((\d+)\/(\d+)\)\s*$/);
+  return correspondencia ? Number(correspondencia[2]) : undefined;
+}
+
+function valorCentavos(transacao: Transacao) {
+  return reaisParaCentavos(Number(transacao.valor_real ?? transacao.valor_estimado));
+}
+
+function LinhaTransacao({
+  transacao,
+  ultima,
+  mesHoje,
+  pagando,
+  onEditar,
+  onExcluir,
+  onPagamento,
+}: {
+  transacao: Transacao;
+  ultima: boolean;
+  mesHoje: string;
+  pagando: boolean;
+  onEditar: () => void;
+  onExcluir: () => void;
+  onPagamento: () => void;
+}) {
+  const receita = transacao.tipo === 'receita';
+  const ehParcela = !!transacao.parcelamento_id;
+  const situacao = ehParcela ? situacaoParcela(transacao, mesHoje) : null;
+  const paga = transacao.status_pagamento === 'pago';
+
+  const detalhes = [
+    receita ? null : nomeCategoria(transacao.categoria_id) || 'Despesa',
+    transacao.valor_real !== null ? 'Valor real' : 'Valor previsto',
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <div className={`flex items-center gap-3 px-4 py-4 ${!ultima ? 'border-b border-slate-100 dark:border-slate-800' : ''}`}>
+      <div
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${
+          receita
+            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400'
+            : 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
+        }`}
+      >
+        <Icon name={ehParcela ? 'layers' : receita ? 'arrow-down-left' : 'arrow-up-right'} size={18} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold">{transacao.nome}</p>
+        <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+          {situacao && <BadgeSituacao situacao={situacao} />}
+          <span className="truncate">
+            {detalhes}
+            {paga && transacao.pago_em ? ` · paga em ${formatarDataPagamento(transacao.pago_em)}` : ''}
+          </span>
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-2">
+        <p className={`text-sm font-bold tabular-nums ${receita ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+          {receita ? '+' : '−'}{formatarCentavos(valorCentavos(transacao))}
+        </p>
+        <div className="flex items-center gap-1">
+          {ehParcela && (
+            <button
+              type="button"
+              onClick={onPagamento}
+              disabled={pagando}
+              aria-pressed={paga}
+              aria-label={paga ? `Desfazer pagamento de ${transacao.nome}` : `Marcar ${transacao.nome} como paga`}
+              title={paga ? 'Desfazer pagamento' : 'Marcar como paga'}
+              className={`flex h-9 w-9 items-center justify-center rounded-lg transition disabled:opacity-50 ${
+                paga
+                  ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-400'
+                  : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-slate-800 dark:hover:text-emerald-400'
+              }`}
+            >
+              <Icon name="check" size={16} />
+            </button>
+          )}
+          <button type="button" onClick={onEditar} aria-label={`Editar ${transacao.nome}`} title="Editar" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-sky-50 hover:text-sky-700 dark:hover:bg-slate-800 dark:hover:text-sky-400">
+            <Icon name="pencil" size={15} />
+          </button>
+          <button type="button" onClick={onExcluir} aria-label={`Excluir ${transacao.nome}`} title="Excluir" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-slate-800 dark:hover:text-rose-400">
+            <Icon name="trash" size={15} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface EstadoModal {
+  tipo: TipoTransacao;
+  transacao: Transacao | null;
 }
 
 export default function Dashboard() {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalType, setModalType] =
-    useState<'receita' | 'despesa'>('receita');
-  const [transacaoParaEditar, setTransacaoParaEditar] =
-    useState<Transacao | null>(null)
-
-  const [mesAtual, setMesAtual] = useState(() => {
-    const agora = new Date();
-    const ano = agora.getFullYear();
-    const mes = String(agora.getMonth() + 1).padStart(2, '0');
-
-    return `${ano}-${mes}`;
-  });
-
+  const [modal, setModal] = useState<EstadoModal | null>(null);
+  const [mesAtual, setMesAtual] = useState(() => mesCorrente());
   const [transacoes, setTransacoes] = useState<Transacao[]>([]);
   const [loading, setLoading] = useState(true);
+  const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
+  const [versao, setVersao] = useState(0);
+  const seletorMesRef = useRef<HTMLInputElement>(null);
+
+  const { toast, mostrar, fechar } = useToast();
+  const recarregar = useCallback(() => setVersao((v) => v + 1), []);
+
+  const operacoes = useOperacoesTransacao({ onConcluido: recarregar, mostrarMensagem: mostrar });
+
+  const mesHoje = mesCorrente();
 
   /*
-   * Busca as transações do mês atual.
+   * Busca as transações do mês selecionado.
    */
   useEffect(() => {
-    const carregarTransacoes = async () => {
-      setLoading(true);
+    let cancelado = false;
 
-      try {
-        const dados = await buscarTransacoes(mesAtual);
+    buscarTransacoes(mesAtual)
+      .then((dados) => {
+        if (cancelado) return;
+        setTransacoes(dados);
+        setErroCarregamento(null);
+      })
+      .catch((error) => {
+        if (cancelado) return;
+        console.error('Erro ao carregar transações:', error);
+        setErroCarregamento('Não foi possível carregar suas transações.');
+      })
+      .finally(() => {
+        if (!cancelado) setLoading(false);
+      });
 
-        setTransacoes(dados as Transacao[]);
-      } catch (error) {
-        console.error(
-          'Erro ao carregar transações:',
-          error
-        );
-
-        alert(
-          'Não foi possível carregar suas transações.'
-        );
-      } finally {
-        setLoading(false);
-      }
+    return () => {
+      cancelado = true;
     };
+  }, [mesAtual, versao]);
 
-    carregarTransacoes();
-  }, [mesAtual]);
-
-
-  /*
-   * Abre o modal de receita/despesa.
-   */
-  const abrirModal = (
-    tipo: 'receita' | 'despesa'
-  ) => {
-    setModalType(tipo);
-    setModalOpen(true);
+  const irParaMes = (mes: string) => {
+    if (mes === mesAtual) return;
+    setLoading(true);
+    setMesAtual(mes);
   };
 
-
-  /*
-   * Formata valores em reais.
-   */
-  const formatarMoeda = (valor: number) => {
-    return valor.toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-    });
+  const abrirModal = (tipo: TipoTransacao, transacao: Transacao | null = null) => {
+    setModal({ tipo, transacao });
   };
-
-
-  /*
-   * Formata YYYY-MM para "setembro de 2026".
-   */
-  const formatarMes = (mes: string) => {
-    const [ano, numeroMes] = mes.split('-');
-
-    const data = new Date(
-      Number(ano),
-      Number(numeroMes) - 1
-    );
-
-    return data.toLocaleDateString('pt-BR', {
-      month: 'long',
-      year: 'numeric',
-    });
-  };
-
-
-  /*
-   * Muda o mês atual.
-   */
-  const alterarMes = (direcao: number) => {
-    const [ano, mes] = mesAtual
-      .split('-')
-      .map(Number);
-
-    const data = new Date(
-      ano,
-      mes - 1 + direcao
-    );
-
-    const novoAno = data.getFullYear();
-
-    const novoMes = String(
-      data.getMonth() + 1
-    ).padStart(2, '0');
-
-    /*
-     * IMPORTANTE:
-     * sem espaços.
-     *
-     * 2026-09
-     */
-    setMesAtual(
-      `${novoAno}-${novoMes}`
-    );
-  };
-
 
   /*
    * =====================================================
-   * CÁLCULOS DO MÊS
+   * CÁLCULOS DO MÊS (em centavos)
    * =====================================================
    */
+  const somar = (filtro: (t: Transacao) => boolean) =>
+    transacoes.filter(filtro).reduce((total, t) => total + valorCentavos(t), 0);
 
-  const receitas = transacoes
-    .filter(
-      (transacao) =>
-        transacao.tipo === 'receita'
-    )
-    .reduce(
-      (total, transacao) =>
-        total + Number(
-          transacao.valor_real ??
-          transacao.valor_estimado
-        ),
-      0
-    );
-
-  const despesas = transacoes
-    .filter(
-      (transacao) =>
-        transacao.tipo === 'despesa'
-    )
-    .reduce(
-      (total, transacao) =>
-        total + Number(
-          transacao.valor_real ??
-          transacao.valor_estimado
-        ),
-      0
-    );
-
+  const receitas = somar((t) => t.tipo === 'receita');
+  const despesas = somar((t) => t.tipo === 'despesa');
   const saldo = receitas - despesas;
 
+  const necessidades = somar((t) => t.tipo === 'despesa' && t.categoria_id === 1);
+  const estiloDeVida = somar((t) => t.tipo === 'despesa' && t.categoria_id === 2);
+  const projetos = somar((t) => t.tipo === 'despesa' && t.categoria_id === 3);
 
-  /*
-   * =====================================================
-   * CATEGORIAS
-   * =====================================================
-   */
+  const percentual = (valor: number) => (receitas > 0 ? (valor / receitas) * 100 : 0);
 
-  const necessidades = transacoes
-    .filter(
-      (transacao) =>
-        transacao.tipo === 'despesa' &&
-        transacao.categoria_id === 1
-    )
-    .reduce(
-      (total, transacao) =>
-        total + Number(
-          transacao.valor_real ??
-          transacao.valor_estimado
-        ),
-      0
-    );
+  const listaReceitas = transacoes.filter((t) => t.tipo === 'receita');
+  const listaDespesas = transacoes.filter((t) => t.tipo === 'despesa');
 
-  const estiloDeVida = transacoes
-    .filter(
-      (transacao) =>
-        transacao.tipo === 'despesa' &&
-        transacao.categoria_id === 2
-    )
-    .reduce(
-      (total, transacao) =>
-        total + Number(
-          transacao.valor_real ??
-          transacao.valor_estimado
-        ),
-      0
-    );
+  const parcelasDoMes = listaDespesas.filter((t) => t.parcelamento_id);
+  const parcelasEmAberto = parcelasDoMes.filter((t) => t.status_pagamento !== 'pago').length;
 
-  const projetos = transacoes
-    .filter(
-      (transacao) =>
-        transacao.tipo === 'despesa' &&
-        transacao.categoria_id === 3
-    )
-    .reduce(
-      (total, transacao) =>
-        total + Number(
-          transacao.valor_real ??
-          transacao.valor_estimado
-        ),
-      0
-    );
+  const mesAnterior = adicionarMeses(mesAtual, -1);
+  const proximoMes = adicionarMeses(mesAtual, 1);
 
+  const renderLista = (lista: Transacao[], tipo: TipoTransacao) => {
+    const rotulo = tipo === 'receita' ? 'receitas' : 'despesas';
 
-  /*
-   * Percentual de cada categoria sobre a receita.
-   *
-   * Exemplo:
-   *
-   * Receita = 3500
-   * Necessidades = 700
-   *
-   * 700 / 3500 = 20%
-   */
-  const percentualNecessidades =
-    receitas > 0
-      ? (necessidades / receitas) * 100
-      : 0;
-
-  const percentualEstiloDeVida =
-    receitas > 0
-      ? (estiloDeVida / receitas) * 100
-      : 0;
-
-  const percentualProjetos =
-    receitas > 0
-      ? (projetos / receitas) * 100
-      : 0;
-
-
-  /*
-   * Evita a barra ultrapassar 100%.
-   */
-  const larguraBarra = (percentual: number) =>
-    Math.min(percentual, 100);
-
-
-  /*
-   * Nome da categoria.
-   */
-  const nomeCategoria = (
-    categoriaId: number | null
-  ) => {
-    switch (categoriaId) {
-      case 1:
-        return 'Necessidades';
-
-      case 2:
-        return 'Estilo de Vida';
-
-      case 3:
-        return 'Projetos e Poupança';
-
-      default:
-        return null;
-    }
-  };
-  const editar = (transacao: Transacao) => {
-    setTransacaoParaEditar(transacao)
-    setModalType(transacao.tipo)
-    setModalOpen(true)
-  }
-  const excluir = async (id: string) => {
-    const confirmar = window.confirm(
-      'Deseja realmente excluir esta transação?'
-    );
-
-    if (!confirmar) {
-      return;
+    if (loading) {
+      return <div className="px-5 py-6 text-center text-sm text-slate-500" role="status">Carregando {rotulo}...</div>;
     }
 
-    try {
-      await excluirTransacao(id);
-
-      // Remove imediatamente da tela
-      setTransacoes((transacoesAtuais) =>
-        transacoesAtuais.filter(
-          (transacao) => transacao.id !== id
-        )
-      );
-    } catch (error) {
-      console.error(
-        'Erro ao excluir transação:',
-        error
-      );
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : 'Não foi possível excluir a transação.'
+    if (erroCarregamento) {
+      return (
+        <div className="px-5 py-6 text-center">
+          <p className="text-sm text-rose-600 dark:text-rose-400">{erroCarregamento}</p>
+          <button type="button" onClick={() => { setLoading(true); recarregar(); }} className="mt-2 text-sm font-bold text-emerald-700 underline dark:text-emerald-400">
+            Tentar novamente
+          </button>
+        </div>
       );
     }
+
+    if (lista.length === 0) {
+      return (
+        <div className="px-5 py-7 text-center">
+          <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Nenhuma {tipo} neste mês</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {tipo === 'receita' ? 'Suas entradas aparecerão aqui.' : 'Seus gastos aparecerão aqui.'}
+          </p>
+        </div>
+      );
+    }
+
+    return lista.map((transacao, index) => (
+      <LinhaTransacao
+        key={transacao.id}
+        transacao={transacao}
+        ultima={index === lista.length - 1}
+        mesHoje={mesHoje}
+        pagando={operacoes.pagandoId === transacao.id}
+        onEditar={() => abrirModal(transacao.tipo, transacao)}
+        onExcluir={() => operacoes.solicitarExclusao(transacao, { totalParcelas: totalDoNome(transacao.nome) })}
+        onPagamento={() => operacoes.alternarPagamento(transacao)}
+      />
+    ));
   };
 
   return (
     <main className="min-h-screen bg-slate-50 pb-28 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="mx-auto w-full max-w-lg px-4 pb-8 pt-5 sm:px-5">
-        <header className="mb-6 flex items-center justify-between">
+        <header className="mb-6 flex items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm">
@@ -419,8 +281,17 @@ export default function Dashboard() {
               Sua vida financeira em ordem.
             </p>
           </div>
-          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 dark:border-slate-800 dark:bg-slate-900">
-            <Icon name="user" size={18} />
+          <div className="flex items-center gap-2">
+            <Link
+              href="/parcelamentos"
+              className="flex h-10 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <Icon name="layers" size={16} />
+              Parcelamentos
+            </Link>
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+              <Icon name="user" size={18} />
+            </div>
           </div>
         </header>
 
@@ -432,7 +303,7 @@ export default function Dashboard() {
                 Saldo do mês
               </p>
               <h2 className="mt-3 break-words text-3xl font-bold tracking-tight">
-                {formatarMoeda(saldo)}
+                {formatarCentavos(saldo)}
               </h2>
               <p className="mt-2 text-sm capitalize text-emerald-50/80">
                 {formatarMes(mesAtual)}
@@ -453,7 +324,7 @@ export default function Dashboard() {
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Receitas</span>
             </div>
             <p className="break-words text-lg font-bold tracking-tight text-emerald-700 dark:text-emerald-400">
-              {formatarMoeda(receitas)}
+              {formatarCentavos(receitas)}
             </p>
           </div>
           <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -464,33 +335,101 @@ export default function Dashboard() {
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Despesas</span>
             </div>
             <p className="break-words text-lg font-bold tracking-tight text-rose-600 dark:text-rose-400">
-              {formatarMoeda(despesas)}
+              {formatarCentavos(despesas)}
             </p>
           </div>
         </section>
 
-        <section className="mb-5 flex items-center justify-between rounded-2xl border border-slate-200/80 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <button
-            type="button"
-            aria-label="Mês anterior"
-            onClick={() => alterarMes(-1)}
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 active:scale-95 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <Icon name="chevron-left" size={20} />
-          </button>
-          <div className="text-center">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Visualizando</p>
-            <h2 className="mt-0.5 text-sm font-bold capitalize">{formatarMes(mesAtual)}</h2>
+        {/* Navegação mensal */}
+        <nav aria-label="Navegação mensal" className="mb-5 rounded-2xl border border-slate-200/80 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              aria-label={`Mês anterior: ${formatarMes(mesAnterior)}`}
+              onClick={() => irParaMes(mesAnterior)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-95 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Icon name="chevron-left" size={20} />
+            </button>
+
+            <div className="relative min-w-0 flex-1 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Visualizando</p>
+              <button
+                type="button"
+                onClick={() => {
+                  const campo = seletorMesRef.current;
+                  if (!campo) return;
+                  try {
+                    campo.showPicker();
+                  } catch {
+                    campo.focus();
+                  }
+                }}
+                className="mx-auto mt-0.5 flex items-center gap-1.5 rounded-lg px-2 py-0.5 text-sm font-bold capitalize transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-slate-800"
+                aria-label={`Escolher mês. Mês selecionado: ${formatarMes(mesAtual)}`}
+              >
+                <span aria-live="polite">{formatarMes(mesAtual)}</span>
+                <Icon name="calendar" size={14} />
+              </button>
+              <input
+                ref={seletorMesRef}
+                type="month"
+                value={mesAtual}
+                onChange={(e) => {
+                  const mes = normalizarMes(e.target.value);
+                  if (mes) irParaMes(mes);
+                }}
+                tabIndex={-1}
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-0 w-full opacity-0"
+              />
+            </div>
+
+            <button
+              type="button"
+              aria-label={`Próximo mês: ${formatarMes(proximoMes)}`}
+              onClick={() => irParaMes(proximoMes)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-95 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Icon name="chevron-right" size={20} />
+            </button>
           </div>
-          <button
-            type="button"
-            aria-label="Próximo mês"
-            onClick={() => alterarMes(1)}
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 active:scale-95 dark:text-slate-300 dark:hover:bg-slate-800"
+
+          {mesAtual !== mesHoje && (
+            <div className="mt-1 flex justify-center pb-1">
+              <button
+                type="button"
+                onClick={() => irParaMes(mesHoje)}
+                className="rounded-lg px-2.5 py-1 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+              >
+                Voltar para o mês atual
+              </button>
+            </div>
+          )}
+        </nav>
+
+        {/* Atalho: parcelas do mês */}
+        {!loading && parcelasDoMes.length > 0 && (
+          <Link
+            href="/parcelamentos"
+            className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800/60"
           >
-            <Icon name="chevron-right" size={20} />
-          </button>
-        </section>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400">
+              <Icon name="layers" size={18} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-bold">
+                {parcelasDoMes.length} {parcelasDoMes.length === 1 ? 'parcela' : 'parcelas'} neste mês
+              </span>
+              <span className="block text-xs text-slate-500 dark:text-slate-400">
+                {parcelasEmAberto === 0
+                  ? 'Todas pagas'
+                  : `${parcelasEmAberto} em aberto · gerenciar parcelamentos`}
+              </span>
+            </span>
+            <Icon name="chevron-right" size={18} />
+          </Link>
+        )}
 
         <section className="mb-6 rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-5 flex items-start justify-between gap-3">
@@ -504,149 +443,53 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-5">
-            <CategoryProgress
-              title="Necessidades"
-              value={necessidades}
-              percentage={percentualNecessidades}
-              color="bg-sky-500"
-              formatarMoeda={formatarMoeda}
-              larguraBarra={larguraBarra}
-            />
-            <CategoryProgress
-              title="Estilo de vida"
-              value={estiloDeVida}
-              percentage={percentualEstiloDeVida}
-              color="bg-violet-500"
-              formatarMoeda={formatarMoeda}
-              larguraBarra={larguraBarra}
-            />
-            <CategoryProgress
-              title="Projetos e poupança"
-              value={projetos}
-              percentage={percentualProjetos}
-              color="bg-emerald-500"
-              formatarMoeda={formatarMoeda}
-              larguraBarra={larguraBarra}
-            />
+            <CategoryProgress title="Necessidades" valueCentavos={necessidades} percentage={percentual(necessidades)} color="bg-sky-500" />
+            <CategoryProgress title="Estilo de vida" valueCentavos={estiloDeVida} percentage={percentual(estiloDeVida)} color="bg-violet-500" />
+            <CategoryProgress title="Projetos e poupança" valueCentavos={projetos} percentage={percentual(projetos)} color="bg-emerald-500" />
           </div>
         </section>
 
         {/* Receitas */}
-        <section className="mb-6">
+        <section className="mb-6" aria-labelledby="titulo-receitas">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
                 <Icon name="trending-up" size={18} />
               </span>
               <div>
-                <h2 className="text-base font-bold">Receitas</h2>
+                <h2 id="titulo-receitas" className="text-base font-bold">Receitas</h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">Entradas do mês</p>
               </div>
             </div>
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
-              {transacoes.filter((transacao) => transacao.tipo === 'receita').length}
+              {listaReceitas.length}
             </span>
           </div>
 
           <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {loading ? (
-              <div className="px-5 py-6 text-center text-sm text-slate-500">Carregando receitas...</div>
-            ) : transacoes.filter((transacao) => transacao.tipo === 'receita').length === 0 ? (
-              <div className="px-5 py-7 text-center">
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Nenhuma receita neste mês</p>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Suas entradas aparecerão aqui.</p>
-              </div>
-            ) : (
-              transacoes.filter((transacao) => transacao.tipo === 'receita').map((transacao, index, lista) => (
-                <div
-                  key={transacao.id}
-                  className={`flex items-center gap-3 px-4 py-4 ${index !== lista.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}`}
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
-                    <Icon name="arrow-down-left" size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{transacao.nome}</p>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {transacao.valor_real !== null ? 'Valor real' : 'Valor previsto'}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-2">
-                    <p className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                      +{formatarMoeda(Number(transacao.valor_real ?? transacao.valor_estimado))}
-                    </p>
-                    <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => editar(transacao)} aria-label={`Editar ${transacao.nome}`} title="Editar" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-sky-50 hover:text-sky-700 dark:hover:bg-slate-800 dark:hover:text-sky-400">
-                        <Icon name="pencil" size={15} />
-                      </button>
-                      <button type="button" onClick={() => excluir(transacao.id)} aria-label={`Excluir ${transacao.nome}`} title="Excluir" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-slate-800 dark:hover:text-rose-400">
-                        <Icon name="trash" size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
+            {renderLista(listaReceitas, 'receita')}
           </div>
         </section>
 
         {/* Despesas */}
-        <section className="mb-28">
+        <section className="mb-28" aria-labelledby="titulo-despesas">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
                 <Icon name="trending-down" size={18} />
               </span>
               <div>
-                <h2 className="text-base font-bold">Despesas</h2>
+                <h2 id="titulo-despesas" className="text-base font-bold">Despesas</h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">Saídas do mês</p>
               </div>
             </div>
             <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
-              {transacoes.filter((transacao) => transacao.tipo === 'despesa').length}
+              {listaDespesas.length}
             </span>
           </div>
 
           <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {loading ? (
-              <div className="px-5 py-6 text-center text-sm text-slate-500">Carregando despesas...</div>
-            ) : transacoes.filter((transacao) => transacao.tipo === 'despesa').length === 0 ? (
-              <div className="px-5 py-7 text-center">
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Nenhuma despesa neste mês</p>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Seus gastos aparecerão aqui.</p>
-              </div>
-            ) : (
-              transacoes.filter((transacao) => transacao.tipo === 'despesa').map((transacao, index, lista) => (
-                <div
-                  key={transacao.id}
-                  className={`flex items-center gap-3 px-4 py-4 ${index !== lista.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}`}
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
-                    <Icon name="arrow-up-right" size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{transacao.nome}</p>
-                    <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
-                      {nomeCategoria(transacao.categoria_id) || 'Despesa'}
-                      {transacao.valor_real !== null ? ' · Valor real' : ' · Valor previsto'}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-2">
-                    <p className="text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
-                      −{formatarMoeda(Number(transacao.valor_real ?? transacao.valor_estimado))}
-                    </p>
-                    <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => editar(transacao)} aria-label={`Editar ${transacao.nome}`} title="Editar" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-sky-50 hover:text-sky-700 dark:hover:bg-slate-800 dark:hover:text-sky-400">
-                        <Icon name="pencil" size={15} />
-                      </button>
-                      <button type="button" onClick={() => excluir(transacao.id)} aria-label={`Excluir ${transacao.nome}`} title="Excluir" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-slate-800 dark:hover:text-rose-400">
-                        <Icon name="trash" size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
+            {renderLista(listaDespesas, 'despesa')}
           </div>
         </section>
       </div>
@@ -655,11 +498,7 @@ export default function Dashboard() {
         <div className="mx-auto flex max-w-lg gap-3">
           <button
             type="button"
-            onClick={() => {
-              setTransacaoParaEditar(null);
-              setModalType('receita');
-              setModalOpen(true);
-            }}
+            onClick={() => abrirModal('receita')}
             className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.98]"
           >
             <Icon name="plus" size={18} />
@@ -667,11 +506,7 @@ export default function Dashboard() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              setTransacaoParaEditar(null);
-              setModalType('despesa');
-              setModalOpen(true);
-            }}
+            onClick={() => abrirModal('despesa')}
             className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-rose-600 text-sm font-bold text-white shadow-sm transition hover:bg-rose-700 active:scale-[0.98]"
           >
             <Icon name="plus" size={18} />
@@ -680,16 +515,23 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <TransactionModal
-        isOpen={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          setTransacaoParaEditar(null);
-        }}
-        tipo={modalType}
-        mesAtual={mesAtual}
-        transacaoParaEditar={transacaoParaEditar}
-      />
+      {modal && (
+        <TransactionModal
+          onClose={() => setModal(null)}
+          onSalvo={(mensagem) => {
+            setModal(null);
+            mostrar(mensagem);
+            recarregar();
+          }}
+          tipo={modal.tipo}
+          mesAtual={mesAtual}
+          transacaoParaEditar={modal.transacao}
+          totalParcelas={modal.transacao ? totalDoNome(modal.transacao.nome) : undefined}
+        />
+      )}
+
+      {operacoes.dialogo}
+      <Toast toast={toast} onFechar={fechar} />
     </main>
   );
 }
