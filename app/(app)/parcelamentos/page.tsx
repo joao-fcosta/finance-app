@@ -6,8 +6,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { buscarParcelamentos } from '@/app/actions'
 import BadgeSituacao from '@/app/components/BadgeSituacao'
 import Icon from '@/app/components/Icon'
-import Toast, { useToast } from '@/app/components/Toast'
-import TransactionModal from '@/app/components/TransactionModal'
+import { useApp } from '@/app/components/AppShell'
 import { formatarDataPagamento, useOperacoesTransacao } from '@/app/components/useOperacoesTransacao'
 import { compararMeses, formatarMes, formatarMesCurto, mesCorrente } from '@/app/lib/meses'
 import { formatarCentavos } from '@/app/lib/money'
@@ -208,13 +207,6 @@ function LinhaParcela({
   )
 }
 
-interface EstadoModal {
-  parcela: Parcela
-  parcelamentoId: string
-  total: number
-  futuras: number
-}
-
 function ConteudoParcelamentos() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -225,11 +217,9 @@ function ConteudoParcelamentos() {
   const [erro, setErro] = useState<string | null>(null)
   const [versao, setVersao] = useState(0)
   const [aba, setAba] = useState<'ativos' | 'finalizados'>('ativos')
-  const [modal, setModal] = useState<EstadoModal | null>(null)
-
-  const { toast, mostrar, fechar } = useToast()
+  const { mostrar, abrirLancamento, notificarAlteracao, versaoDados } = useApp()
   const recarregar = useCallback(() => setVersao((v) => v + 1), [])
-  const operacoes = useOperacoesTransacao({ onConcluido: recarregar, mostrarMensagem: mostrar })
+  const operacoes = useOperacoesTransacao({ onConcluido: notificarAlteracao, mostrarMensagem: mostrar })
 
   const mesHoje = mesCorrente()
 
@@ -254,7 +244,7 @@ function ConteudoParcelamentos() {
     return () => {
       cancelado = true
     }
-  }, [versao])
+  }, [versao, versaoDados])
 
   const itens = useMemo<ParcelamentoResumido[]>(
     () =>
@@ -303,6 +293,9 @@ function ConteudoParcelamentos() {
   const renderDetalhe = ({ parcelamento, resumo, categoria }: ParcelamentoResumido) => {
     const grupos = agruparParcelasPorAno(parcelamento.parcelas)
     const total = resumo.totalParcelas
+    const futurasPendentes = parcelamento.parcelas.filter(
+      (p) => p.mes_referencia > mesHoje && p.status_pagamento !== 'pago'
+    ).length
 
     return (
       <>
@@ -391,14 +384,22 @@ function ConteudoParcelamentos() {
                       mesHoje={mesHoje}
                       pagando={operacoes.pagandoId === parcela.id}
                       onPagamento={() => operacoes.alternarPagamento({ ...parcela, parcelamento_id: parcelamento.id })}
-                      onEditar={() => {
-                        setModal({
-                          parcela,
-                          parcelamentoId: parcelamento.id,
-                          total,
-                          futuras: parcelasAfetadasPorEdicaoFutura(parcelamento.parcelas, parcela.numero_parcela ?? 0).length,
+                      onEditar={() =>
+                        abrirLancamento({
+                          tipo: parcela.tipo,
+                          mes: parcela.mes_referencia,
+                          transacao: {
+                            ...parcela,
+                            nome: nomeBaseParcela(parcela.nome),
+                            parcelamento_id: parcelamento.id,
+                          },
+                          totalParcelas: total,
+                          parcelasFuturasAfetadas: parcelasAfetadasPorEdicaoFutura(
+                            parcelamento.parcelas,
+                            parcela.numero_parcela ?? 0
+                          ).length,
                         })
-                      }}
+                      }
                       onExcluir={() =>
                         operacoes.solicitarExclusao(
                           { ...parcela, parcelamento_id: parcelamento.id },
@@ -412,6 +413,17 @@ function ConteudoParcelamentos() {
             ))}
           </div>
         </section>
+
+        {futurasPendentes > 0 && futurasPendentes < total && (
+          <button
+            type="button"
+            onClick={() => operacoes.solicitarCancelamentoFuturas(parcelamento.id, parcelamento.nome, futurasPendentes)}
+            className="mb-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <Icon name="stop" size={16} />
+            Cancelar {futurasPendentes} {futurasPendentes === 1 ? 'parcela futura' : 'parcelas futuras'}
+          </button>
+        )}
 
         <button
           type="button"
@@ -498,7 +510,7 @@ function ConteudoParcelamentos() {
   const emDetalhe = !!selecionadoId
 
   return (
-    <main className="min-h-screen bg-slate-50 pb-16 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <main>
       <div className="mx-auto w-full max-w-lg px-4 pb-8 pt-5 sm:px-5">
         <header className="mb-6 flex items-center gap-3">
           {emDetalhe ? (
@@ -552,28 +564,7 @@ function ConteudoParcelamentos() {
         )}
       </div>
 
-      {modal && (
-        <TransactionModal
-          onClose={() => setModal(null)}
-          onSalvo={(mensagem) => {
-            setModal(null)
-            mostrar(mensagem)
-            recarregar()
-          }}
-          tipo={modal.parcela.tipo}
-          mesAtual={modal.parcela.mes_referencia}
-          transacaoParaEditar={{
-            ...modal.parcela,
-            nome: nomeBaseParcela(modal.parcela.nome),
-            parcelamento_id: modal.parcelamentoId,
-          }}
-          totalParcelas={modal.total}
-          parcelasFuturasAfetadas={modal.futuras}
-        />
-      )}
-
       {operacoes.dialogo}
-      <Toast toast={toast} onFechar={fechar} />
     </main>
   )
 }

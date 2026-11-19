@@ -1,9 +1,11 @@
 'use client'
 
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { adicionarTransacao, atualizarTransacao } from '@/app/actions'
+import { adicionarTransacao, atualizarTransacao, criarRecorrencia } from '@/app/actions'
 import Icon from '@/app/components/Icon'
+import { dataNoMes, dataValida, formatarDataCurta, hoje, partes } from '@/app/lib/datas'
 import { adicionarMeses, formatarMesCurto, normalizarMes } from '@/app/lib/meses'
+import { FREQUENCIAS, Frequencia, descreverFrequencia, ocorrenciasEntre } from '@/app/lib/recorrencias'
 import {
   centavosParaTextoCampo,
   distribuirParcelas,
@@ -29,13 +31,20 @@ export interface TransacaoEditavel {
   parcelamento_id: string | null
   numero_parcela: number | null
   status_pagamento: StatusPagamento
+  recorrencia_id?: string | null
+  data_vencimento?: string | null
 }
+
+/** Como a nova transação se repete. */
+export type ModoLancamento = 'unica' | 'parcelada' | 'recorrente'
 
 interface TransactionModalProps {
   onClose: () => void
   /** Chamado após salvar com sucesso, com a mensagem de confirmação. */
   onSalvo: (mensagem: string) => void
   tipo: TipoTransacao
+  /** Modo inicial ao criar (ex.: "Nova recorrência" abre em 'recorrente'). */
+  modoInicial?: ModoLancamento
   mesAtual: string
   transacaoParaEditar?: TransacaoEditavel | null
   /** Total de parcelas do parcelamento (apenas para exibição). */
@@ -44,12 +53,26 @@ interface TransactionModalProps {
   parcelasFuturasAfetadas?: number
 }
 
-type Campo = 'nome' | 'valor' | 'mes' | 'categoria' | 'parcelas'
+type Campo = 'nome' | 'valor' | 'mes' | 'categoria' | 'parcelas' | 'dataInicio' | 'dataFim' | 'intervalo'
 type Erros = Partial<Record<Campo, string>>
 
 const MIN_PARCELAS = 2
 const MAX_PARCELAS = 120
 const ATALHOS_PARCELAS = [2, 3, 6, 10, 12]
+
+const UNIDADE_INTERVALO: Record<Frequencia, [string, string]> = {
+  semanal: ['semana', 'semanas'],
+  mensal: ['mês', 'meses'],
+  anual: ['ano', 'anos'],
+}
+
+/** Primeira ocorrência sugerida: hoje, ou o mesmo dia no mês visualizado. */
+function dataInicialSugerida(mes: string): string {
+  const dataHoje = hoje()
+  if (!normalizarMes(mes) || dataHoje.startsWith(mes)) return dataHoje
+  const [ano, numero] = mes.split('-').map(Number)
+  return dataNoMes(ano, numero, partes(dataHoje).dia)
+}
 
 const classeCampo =
   'w-full rounded-2xl border bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-950 dark:text-white dark:focus:bg-slate-950'
@@ -70,6 +93,7 @@ export default function TransactionModal({
   onClose,
   onSalvo,
   tipo: tipoInicial,
+  modoInicial = 'unica',
   mesAtual,
   transacaoParaEditar = null,
   totalParcelas,
@@ -89,7 +113,14 @@ export default function TransactionModal({
   )
   const [categoriaId, setCategoriaId] = useState<number>(edicao?.categoria_id ?? 1)
   const [mes, setMes] = useState(edicao?.mes_referencia ?? mesAtual)
-  const [parcelado, setParcelado] = useState(false)
+  const [modo, setModo] = useState<ModoLancamento>(() =>
+    edicao ? 'unica' : modoInicial === 'parcelada' && tipoInicial !== 'despesa' ? 'unica' : modoInicial
+  )
+  const [frequencia, setFrequencia] = useState<Frequencia>('mensal')
+  const [intervaloTexto, setIntervaloTexto] = useState('1')
+  const [dataInicio, setDataInicio] = useState(() => dataInicialSugerida(mesAtual))
+  const [temFim, setTemFim] = useState(false)
+  const [dataFim, setDataFim] = useState('')
   const [parcelasTexto, setParcelasTexto] = useState('2')
   const [escopo, setEscopo] = useState<EscopoEdicao>('unica')
   const [erros, setErros] = useState<Erros>({})
@@ -104,7 +135,11 @@ export default function TransactionModal({
   const parcelasRef = useRef<HTMLInputElement>(null)
 
   const ehDespesa = tipo === 'despesa'
+  const ehOcorrencia = !!edicao?.recorrencia_id
   const podeParcelar = ehDespesa && !modoEdicao
+  const parcelado = modo === 'parcelada' && podeParcelar
+  const recorrente = modo === 'recorrente' && !modoEdicao
+  const intervalo = Number(intervaloTexto)
   const quantidadeParcelas = Number(parcelasTexto)
   // Parcela paga: valor e mês só mudam depois de desfazer o pagamento.
   const valorEMesBloqueados = parcelaPaga
@@ -155,6 +190,20 @@ export default function TransactionModal({
     }
   }, [parcelado, podeParcelar, quantidadeParcelas, valorCentavos, mes])
 
+  /* Prévia das próximas ocorrências. */
+  const previaRecorrencia = useMemo(() => {
+    if (!recorrente || !dataValida(dataInicio)) return null
+    if (!Number.isInteger(intervalo) || intervalo < 1 || intervalo > 24) return null
+    const regra = {
+      frequencia,
+      intervalo,
+      data_inicio: dataInicio,
+      data_fim: temFim && dataValida(dataFim) ? dataFim : null,
+    }
+    const proximas = ocorrenciasEntre(regra, dataInicio, '9999-12-31', 3)
+    return { descricao: descreverFrequencia(regra), proximas }
+  }, [recorrente, dataInicio, intervalo, frequencia, temFim, dataFim])
+
   const validar = (): Erros => {
     const novos: Erros = {}
 
@@ -163,13 +212,26 @@ export default function TransactionModal({
 
     if (valorCentavos <= 0) novos.valor = 'Informe um valor maior que zero.'
 
-    if (!normalizarMes(mes)) novos.mes = 'Escolha um mês válido.'
+    if (recorrente) {
+      if (!dataValida(dataInicio)) novos.dataInicio = 'Escolha a data da primeira ocorrência.'
+      if (!Number.isInteger(intervalo) || intervalo < 1 || intervalo > 24) {
+        novos.intervalo = 'Use um número entre 1 e 24.'
+      }
+      if (temFim) {
+        if (!dataValida(dataFim)) novos.dataFim = 'Escolha a data final.'
+        else if (dataValida(dataInicio) && dataFim < dataInicio) {
+          novos.dataFim = 'A data final deve ser depois da primeira ocorrência.'
+        }
+      }
+    } else if (!normalizarMes(mes)) {
+      novos.mes = 'Escolha um mês válido.'
+    }
 
     if (ehDespesa && !CATEGORIAS.some((c) => c.id === categoriaId)) {
       novos.categoria = 'Selecione uma categoria.'
     }
 
-    if (podeParcelar && parcelado) {
+    if (parcelado) {
       if (
         !Number.isInteger(quantidadeParcelas) ||
         quantidadeParcelas < MIN_PARCELAS ||
@@ -188,6 +250,9 @@ export default function TransactionModal({
     if (lista.nome) nomeRef.current?.focus()
     else if (lista.valor) valorRef.current?.focus()
     else if (lista.mes) mesRef.current?.focus()
+    else if (lista.dataInicio) document.getElementById('campo-data-inicio')?.focus()
+    else if (lista.intervalo) document.getElementById('campo-intervalo')?.focus()
+    else if (lista.dataFim) document.getElementById('campo-data-fim')?.focus()
     else if (lista.parcelas) parcelasRef.current?.focus()
   }
 
@@ -206,14 +271,26 @@ export default function TransactionModal({
               categoriaId: ehDespesa ? categoriaId : undefined,
               escopo: ehParcela ? escopo : undefined,
             })
-          : await adicionarTransacao({
-              nome,
-              valorCentavos,
-              mesReferencia: mes,
-              tipo,
-              categoriaId: ehDespesa ? categoriaId : undefined,
-              parcelas: podeParcelar && parcelado ? quantidadeParcelas : 1,
-            })
+          : recorrente
+            ? await criarRecorrencia({
+                nome,
+                valorCentavos,
+                tipo,
+                categoriaId: ehDespesa ? categoriaId : undefined,
+                frequencia,
+                intervalo,
+                dataInicio,
+                dataFim: temFim ? dataFim : null,
+                mesVisualizado: mesAtual,
+              })
+            : await adicionarTransacao({
+                nome,
+                valorCentavos,
+                mesReferencia: mes,
+                tipo,
+                categoriaId: ehDespesa ? categoriaId : undefined,
+                parcelas: parcelado ? quantidadeParcelas : 1,
+              })
 
       if (!resultado.ok) {
         // Mantém tudo o que foi preenchido para o usuário corrigir.
@@ -268,23 +345,27 @@ export default function TransactionModal({
     ? ehParcela
       ? 'Editar parcela'
       : `Editar ${tipo === 'receita' ? 'receita' : 'despesa'}`
-    : `Nova ${tipo === 'receita' ? 'receita' : 'despesa'}`
+    : recorrente
+      ? `${tipo === 'receita' ? 'Receita' : 'Conta'} recorrente`
+      : `Nova ${tipo === 'receita' ? 'receita' : 'despesa'}`
 
   const rotuloSalvar = salvando
     ? 'Salvando...'
     : modoEdicao
       ? 'Salvar alterações'
-      : parcelado && podeParcelar
+      : parcelado
         ? 'Criar parcelamento'
-        : tipo === 'receita'
-          ? 'Adicionar receita'
-          : 'Adicionar despesa'
+        : recorrente
+          ? 'Criar recorrência'
+          : tipo === 'receita'
+            ? 'Adicionar receita'
+            : 'Adicionar despesa'
 
   const corPrimaria =
     tipo === 'receita' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
 
   const rotuloValor =
-    podeParcelar && parcelado
+    parcelado
       ? 'Valor total da compra'
       : ehParcela && escopo === 'futuras'
         ? 'Valor de cada parcela'
@@ -367,7 +448,7 @@ export default function TransactionModal({
                           checked={ativo}
                           onChange={() => {
                             setTipo(opcao)
-                            if (opcao === 'receita') setParcelado(false)
+                            if (opcao === 'receita' && modo === 'parcelada') setModo('unica')
                           }}
                           className="sr-only"
                         />
@@ -473,10 +554,153 @@ export default function TransactionModal({
               </fieldset>
             )}
 
+            {/* Repetição (somente ao criar) */}
+            {!modoEdicao && (
+              <fieldset>
+                <legend className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">Repetição</legend>
+                <div className={`grid gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800 ${ehDespesa ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  {([
+                    ['unica', 'Única'],
+                    ...(ehDespesa ? [['parcelada', 'Parcelada'] as const] : []),
+                    ['recorrente', 'Recorrente'],
+                  ] as const).map(([valor, rotulo]) => {
+                    const ativo = modo === valor
+                    return (
+                      <label
+                        key={valor}
+                        className={`flex min-h-10 cursor-pointer items-center justify-center rounded-xl text-sm font-bold transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-emerald-500 ${
+                          ativo ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white' : 'text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="modo"
+                          value={valor}
+                          checked={ativo}
+                          onChange={() => {
+                            setModo(valor)
+                            limparErro('parcelas')
+                          }}
+                          className="sr-only"
+                        />
+                        {rotulo}
+                      </label>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            )}
+
+            {/* Recorrência */}
+            {recorrente && (
+              <div className="space-y-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+                <fieldset>
+                  <legend className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">Frequência</legend>
+                  <div className="grid grid-cols-3 gap-2">
+                    {FREQUENCIAS.map((f) => (
+                      <label
+                        key={f.valor}
+                        className={`flex min-h-10 cursor-pointer items-center justify-center rounded-xl border text-sm font-bold transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-emerald-500 ${
+                          frequencia === f.valor
+                            ? 'border-violet-500 bg-violet-50 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300'
+                            : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        <input type="radio" name="frequencia" value={f.valor} checked={frequencia === f.valor} onChange={() => setFrequencia(f.valor)} className="sr-only" />
+                        {f.rotulo}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                    <label htmlFor="campo-intervalo">Repetir a cada</label>
+                    <input
+                      id="campo-intervalo"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={intervaloTexto}
+                      onChange={(e) => {
+                        setIntervaloTexto(e.target.value.replace(/\D/g, '').slice(0, 2))
+                        limparErro('intervalo')
+                      }}
+                      aria-invalid={!!erros.intervalo}
+                      className={`${classeCampo} ${bordaCampo(erros.intervalo)} w-16 px-2 py-2 text-center font-bold`}
+                    />
+                    <span>{UNIDADE_INTERVALO[frequencia][intervalo === 1 ? 0 : 1]}</span>
+                  </div>
+                  {erros.intervalo && <p className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">{erros.intervalo}</p>}
+                </fieldset>
+
+                <div>
+                  <label htmlFor="campo-data-inicio" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    {tipo === 'receita' ? 'Primeiro recebimento' : 'Primeiro vencimento'}
+                  </label>
+                  <input
+                    id="campo-data-inicio"
+                    type="date"
+                    value={dataInicio}
+                    onChange={(e) => {
+                      setDataInicio(e.target.value)
+                      limparErro('dataInicio')
+                    }}
+                    aria-invalid={!!erros.dataInicio}
+                    className={`${classeCampo} ${bordaCampo(erros.dataInicio)}`}
+                  />
+                  {erros.dataInicio && <p className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">{erros.dataInicio}</p>}
+                </div>
+
+                <div>
+                  <label className="flex cursor-pointer items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={temFim}
+                      onChange={(e) => {
+                        setTemFim(e.target.checked)
+                        limparErro('dataFim')
+                      }}
+                      className="h-5 w-5 accent-emerald-600"
+                    />
+                    Tem data para terminar
+                  </label>
+                  {temFim && (
+                    <input
+                      id="campo-data-fim"
+                      type="date"
+                      value={dataFim}
+                      min={dataValida(dataInicio) ? dataInicio : undefined}
+                      onChange={(e) => {
+                        setDataFim(e.target.value)
+                        limparErro('dataFim')
+                      }}
+                      aria-label="Data final"
+                      aria-invalid={!!erros.dataFim}
+                      className={`${classeCampo} ${bordaCampo(erros.dataFim)} mt-2`}
+                    />
+                  )}
+                  {erros.dataFim && <p className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">{erros.dataFim}</p>}
+                  {!temFim && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Sem data final: repete até você pausar ou encerrar.</p>}
+                </div>
+
+                <div aria-live="polite" className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs text-slate-600 dark:bg-slate-950 dark:text-slate-300">
+                  {previaRecorrencia ? (
+                    <>
+                      <p className="font-bold text-slate-800 dark:text-slate-100">{previaRecorrencia.descricao}</p>
+                      <p className="mt-0.5">
+                        Próximas: {previaRecorrencia.proximas.map(formatarDataCurta).join(', ')}
+                      </p>
+                    </>
+                  ) : (
+                    <p>Escolha a frequência e a primeira data.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Mês */}
+            {!recorrente && (
             <div>
               <label htmlFor="campo-mes" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                {podeParcelar && parcelado ? 'Mês da 1ª parcela' : 'Mês de referência'}
+                {parcelado ? 'Mês da 1ª parcela' : 'Mês de referência'}
               </label>
               <input
                 ref={mesRef}
@@ -494,6 +718,17 @@ export default function TransactionModal({
               />
               {erros.mes && <p id="erro-mes" className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">{erros.mes}</p>}
             </div>
+            )}
+
+            {ehOcorrencia && (
+              <p className="flex items-start gap-2 rounded-2xl bg-violet-50 px-4 py-3 text-xs text-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
+                <span className="mt-0.5 shrink-0"><Icon name="repeat" size={14} /></span>
+                <span>
+                  Esta é uma ocorrência de uma conta recorrente. As alterações valem só para ela.
+                  Para mudar as próximas, edite a recorrência em Recorrentes.
+                </span>
+              </p>
+            )}
 
             {valorEMesBloqueados && (
               <p id="aviso-paga" className="flex items-start gap-2 rounded-2xl bg-slate-100 px-4 py-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
@@ -503,31 +738,10 @@ export default function TransactionModal({
             )}
 
             {/* Parcelamento (nova despesa) */}
-            {podeParcelar && (
+            {parcelado && (
               <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-                <label className="flex cursor-pointer items-center justify-between gap-3">
-                  <span>
-                    <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">Compra parcelada</span>
-                    <span className="block text-xs text-slate-500 dark:text-slate-400">Divide o valor total entre os meses</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={parcelado}
-                    onChange={(e) => {
-                      setParcelado(e.target.checked)
-                      limparErro('parcelas')
-                    }}
-                    className="peer sr-only"
-                  />
-                  <span
-                    aria-hidden="true"
-                    className="relative h-7 w-12 shrink-0 rounded-full bg-slate-300 transition peer-checked:bg-emerald-600 peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500 peer-focus-visible:ring-offset-2 after:absolute after:left-1 after:top-1 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-5 dark:bg-slate-600 dark:peer-focus-visible:ring-offset-slate-900"
-                  />
-                </label>
-
                 {parcelado && (
-                  <div className="mt-4 space-y-3">
+                  <div className="space-y-3">
                     <div>
                       <label htmlFor="campo-parcelas" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
                         Quantidade de parcelas

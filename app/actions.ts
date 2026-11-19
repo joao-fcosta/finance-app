@@ -2,11 +2,14 @@
 
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { DataISO, dataNoMes, dataValida, hoje, partes } from '@/app/lib/datas'
 import { normalizarMes } from '@/app/lib/meses'
+import { Frequencia, horizonteGeracao } from '@/app/lib/recorrencias'
 import { MAX_CENTAVOS, centavosParaReais, distribuirParcelas, formatarCentavos } from '@/app/lib/money'
 import type {
   EscopoEdicao,
   ParcelamentoComParcelas,
+  Recorrencia,
   TipoTransacao,
   Transacao,
 } from '@/app/lib/types'
@@ -73,11 +76,15 @@ const SELECT_TRANSACAO_BASE = `
   created_at
 `
 
-const SELECT_TRANSACAO = `${SELECT_TRANSACAO_BASE}, status_pagamento, pago_em`
+const SELECT_TRANSACAO = `${SELECT_TRANSACAO_BASE}, status_pagamento, pago_em, recorrencia_id, data_vencimento`
 
 /** Coluna inexistente: a migration da FASE 1 ainda não foi aplicada. */
 function colunaInexistente(error: ErroBanco) {
-  return error.code === '42703' || /status_pagamento|pago_em|valor_contratado/.test(error.message)
+  return (
+    error.code === '42703' ||
+    error.code === '42P01' ||
+    /status_pagamento|pago_em|valor_contratado|recorrencia|data_vencimento/.test(error.message)
+  )
 }
 
 /** Função RPC inexistente. */
@@ -322,7 +329,7 @@ export async function atualizarTransacao(
 
     const { data: transacao, error: buscaError } = await supabase
       .from('transacoes')
-      .select('id, tipo, parcelamento_id')
+      .select('id, tipo, parcelamento_id, recorrencia_id, data_vencimento')
       .eq('id', dados.id)
       .eq('usuario_id', user.id)
       .single()
@@ -332,6 +339,14 @@ export async function atualizarTransacao(
     }
 
     const categoriaId = validarCategoria(transacao.tipo, dados.categoriaId)
+
+    // Ocorrência movida de mês: o vencimento acompanha (mesmo dia, ajustado
+    // ao tamanho do mês). Edição individual não altera a recorrência.
+    let dataVencimento: string | null = transacao.data_vencimento ?? null
+    if (dataVencimento && dataVencimento.slice(0, 7) !== mesReferencia) {
+      const [ano, mes] = mesReferencia.split('-').map(Number)
+      dataVencimento = dataNoMes(ano, mes, partes(dataVencimento).dia)
+    }
 
     if (transacao.parcelamento_id) {
       const escopo: EscopoEdicao = dados.escopo ?? 'unica'
@@ -368,11 +383,15 @@ export async function atualizarTransacao(
         valor_estimado: centavosParaReais(valorCentavos),
         mes_referencia: mesReferencia,
         categoria_id: categoriaId,
+        ...(transacao.recorrencia_id ? { data_vencimento: dataVencimento } : {}),
       })
       .eq('id', dados.id)
       .eq('usuario_id', user.id)
 
     if (error) {
+      if (error.code === '23505') {
+        return { ok: false, erro: 'Já existe uma ocorrência desta recorrência nessa data.' }
+      }
       return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível atualizar a transação.') }
     }
 
@@ -392,6 +411,8 @@ export async function buscarTransacoes(mesReferencia: string): Promise<Transacao
   if (!mes) {
     throw new Error('Mês de referência inválido.')
   }
+
+  await garantirOcorrencias(supabase, mes)
 
   const consulta = (campos: string) =>
     supabase
@@ -420,12 +441,31 @@ export async function buscarTransacoes(mesReferencia: string): Promise<Transacao
         ...t,
         status_pagamento: null,
         pago_em: null,
+        recorrencia_id: null,
+        data_vencimento: null,
       }))
     }
   }
 
   console.error('Erro ao buscar transações:', error)
   throw new Error('Não foi possível carregar suas transações.')
+}
+
+/*
+ * Gera, no servidor, as ocorrências de recorrências que faltam até o
+ * horizonte do mês consultado (idempotente: não duplica). Falhas aqui
+ * não impedem a leitura dos dados já existentes.
+ */
+type ClienteSupabase = Awaited<ReturnType<typeof criarSupabase>>
+
+async function garantirOcorrencias(supabase: ClienteSupabase, mes: string) {
+  const { error } = await supabase.rpc('gerar_ocorrencias', {
+    p_ate: horizonteGeracao(mes, hoje()),
+  })
+
+  if (error && !funcaoInexistente(error)) {
+    console.error('Erro ao gerar ocorrências recorrentes:', error)
+  }
 }
 
 /*
@@ -589,4 +629,214 @@ export async function excluirParcelamento(parcelamentoId: string): Promise<Resul
       mensagem: `Parcelamento excluído (${excluidas} ${excluidas === 1 ? 'parcela' : 'parcelas'}).`,
     }
   }, 'Não foi possível excluir o parcelamento.')
+}
+
+/** Cancela só as parcelas pendentes de meses futuros. */
+export async function cancelarParcelasFuturas(parcelamentoId: string): Promise<Resultado<{ canceladas: number }>> {
+  return executar(async () => {
+    const { supabase } = await obterContexto()
+
+    const { data, error } = await supabase.rpc('cancelar_parcelas_futuras', {
+      p_parcelamento_id: parcelamentoId,
+    })
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível cancelar as parcelas futuras.') }
+    }
+
+    const canceladas = Number(data ?? 0)
+
+    return {
+      ok: true,
+      mensagem: `${canceladas} ${canceladas === 1 ? 'parcela futura cancelada' : 'parcelas futuras canceladas'}.`,
+      dados: { canceladas },
+    }
+  }, 'Não foi possível cancelar as parcelas futuras.')
+}
+
+/*
+ * =====================================================
+ * RECORRÊNCIAS (FASE 2)
+ * =====================================================
+ */
+
+const FREQUENCIAS_VALIDAS: Frequencia[] = ['semanal', 'mensal', 'anual']
+
+function validarData(data: string | null | undefined, mensagem: string): DataISO {
+  if (!data || !dataValida(data)) {
+    throw new ErroValidacao(mensagem)
+  }
+
+  return data
+}
+
+interface NovaRecorrencia {
+  nome: string
+  valorCentavos: number
+  tipo: TipoTransacao
+  categoriaId?: number
+  frequencia: Frequencia
+  intervalo: number
+  dataInicio: string
+  dataFim?: string | null
+  /** Mês visualizado, para gerar as ocorrências até ele. */
+  mesVisualizado?: string
+}
+
+export async function criarRecorrencia(
+  dados: NovaRecorrencia
+): Promise<Resultado<{ recorrenciaId: string }>> {
+  return executar(async () => {
+    const { supabase } = await obterContexto()
+
+    if (dados.tipo !== 'receita' && dados.tipo !== 'despesa') {
+      throw new ErroValidacao('Tipo de transação inválido.')
+    }
+
+    const nome = validarNome(dados.nome)
+    const valorCentavos = validarCentavos(dados.valorCentavos)
+    const categoriaId = validarCategoria(dados.tipo, dados.categoriaId)
+
+    if (!FREQUENCIAS_VALIDAS.includes(dados.frequencia)) {
+      throw new ErroValidacao('Escolha a frequência.')
+    }
+
+    if (!Number.isInteger(dados.intervalo) || dados.intervalo < 1 || dados.intervalo > 24) {
+      throw new ErroValidacao('O intervalo deve ser entre 1 e 24.')
+    }
+
+    const dataInicio = validarData(dados.dataInicio, 'Informe a data da primeira ocorrência.')
+    const dataFim = dados.dataFim ? validarData(dados.dataFim, 'Data final inválida.') : null
+
+    if (dataFim && dataFim < dataInicio) {
+      throw new ErroValidacao('A data final deve ser igual ou posterior à primeira ocorrência.')
+    }
+
+    const mes = normalizarMes(dados.mesVisualizado ?? '') ?? dataInicio.slice(0, 7)
+
+    const { data, error } = await supabase.rpc('criar_recorrencia', {
+      p_nome: nome,
+      p_tipo: dados.tipo,
+      p_categoria_id: categoriaId,
+      p_valor: centavosParaReais(valorCentavos),
+      p_frequencia: dados.frequencia,
+      p_intervalo: dados.intervalo,
+      p_data_inicio: dataInicio,
+      p_data_fim: dataFim,
+      p_gerar_ate: horizonteGeracao(mes > dataInicio.slice(0, 7) ? mes : dataInicio.slice(0, 7), hoje()),
+    })
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível criar a recorrência.') }
+    }
+
+    return {
+      ok: true,
+      mensagem: dados.tipo === 'receita' ? 'Receita recorrente criada.' : 'Conta recorrente criada.',
+      dados: { recorrenciaId: data as string },
+    }
+  }, 'Não foi possível criar a recorrência.')
+}
+
+export async function buscarRecorrencias(): Promise<Recorrencia[]> {
+  const { supabase, user } = await obterContexto()
+
+  const { data, error } = await supabase
+    .from('recorrencias')
+    .select('id, nome, tipo, categoria_id, valor, frequencia, intervalo, data_inicio, data_fim, status, created_at')
+    .eq('usuario_id', user.id)
+    .order('nome', { ascending: true })
+
+  if (error) {
+    console.error('Erro ao buscar recorrências:', error)
+    throw new Error(
+      colunaInexistente(error)
+        ? 'O banco de dados está desatualizado. Aplique a migration da FASE 2 no Supabase.'
+        : 'Não foi possível carregar suas recorrências.'
+    )
+  }
+
+  return (data ?? []) as unknown as Recorrencia[]
+}
+
+interface EdicaoRecorrencia {
+  id: string
+  nome: string
+  valorCentavos: number
+  categoriaId?: number
+  dataFim?: string | null
+}
+
+export async function editarRecorrencia(dados: EdicaoRecorrencia): Promise<Resultado<{ afetadas: number }>> {
+  return executar(async () => {
+    const { supabase } = await obterContexto()
+
+    const nome = validarNome(dados.nome)
+    const valorCentavos = validarCentavos(dados.valorCentavos)
+    const dataFim = dados.dataFim ? validarData(dados.dataFim, 'Data final inválida.') : null
+
+    if (dados.categoriaId !== undefined && ![1, 2, 3].includes(dados.categoriaId)) {
+      throw new ErroValidacao('Selecione uma categoria.')
+    }
+
+    const { data, error } = await supabase.rpc('editar_recorrencia', {
+      p_recorrencia_id: dados.id,
+      p_nome: nome,
+      p_valor: centavosParaReais(valorCentavos),
+      p_categoria_id: dados.categoriaId ?? null,
+      p_data_fim: dataFim,
+    })
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível atualizar a recorrência.') }
+    }
+
+    const afetadas = Number(data ?? 0)
+
+    return {
+      ok: true,
+      mensagem:
+        afetadas > 0
+          ? `Recorrência atualizada (${afetadas} ${afetadas === 1 ? 'ocorrência futura' : 'ocorrências futuras'}).`
+          : 'Recorrência atualizada.',
+      dados: { afetadas },
+    }
+  }, 'Não foi possível atualizar a recorrência.')
+}
+
+type AcaoRecorrencia = 'pausar' | 'reativar' | 'encerrar' | 'excluir'
+
+const MENSAGENS_ACAO: Record<AcaoRecorrencia, { ok: string; erro: string }> = {
+  pausar: { ok: 'Recorrência pausada.', erro: 'Não foi possível pausar a recorrência.' },
+  reativar: { ok: 'Recorrência reativada.', erro: 'Não foi possível reativar a recorrência.' },
+  encerrar: { ok: 'Recorrência encerrada. O histórico foi mantido.', erro: 'Não foi possível encerrar a recorrência.' },
+  excluir: { ok: 'Recorrência excluída. O histórico foi mantido.', erro: 'Não foi possível excluir a recorrência.' },
+}
+
+export async function alterarStatusRecorrencia(id: string, acao: AcaoRecorrencia): Promise<Resultado> {
+  const mensagens = MENSAGENS_ACAO[acao]
+
+  return executar(async () => {
+    const { supabase } = await obterContexto()
+
+    if (!mensagens) {
+      throw new ErroValidacao('Ação inválida.')
+    }
+
+    const chamada =
+      acao === 'reativar'
+        ? supabase.rpc('reativar_recorrencia', {
+            p_recorrencia_id: id,
+            p_gerar_ate: horizonteGeracao(hoje().slice(0, 7), hoje()),
+          })
+        : supabase.rpc(`${acao}_recorrencia`, { p_recorrencia_id: id })
+
+    const { error } = await chamada
+
+    if (error) {
+      return { ok: false, erro: mensagemDoBanco(error, mensagens.erro) }
+    }
+
+    return { ok: true, mensagem: mensagens.ok }
+  }, mensagens?.erro ?? 'Não foi possível concluir a operação.')
 }

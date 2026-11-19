@@ -26,6 +26,10 @@ export interface Transacao {
   numero_parcela: number | null
   status_pagamento: StatusPagamento
   pago_em: string | null
+  /** Recorrência que gerou esta ocorrência (FASE 2). */
+  recorrencia_id: string | null
+  /** Data de vencimento "YYYY-MM-DD" (ocorrências de recorrências). */
+  data_vencimento: string | null
   created_at: string
 }
 
@@ -51,6 +55,20 @@ export interface ParcelamentoComParcelas {
   /** Valor original da compra (não é recalculado). */
   valor_contratado: number | null
   parcelas: Parcela[]
+}
+
+export interface Recorrencia {
+  id: string
+  nome: string
+  tipo: TipoTransacao
+  categoria_id: number | null
+  valor: number
+  frequencia: 'semanal' | 'mensal' | 'anual'
+  intervalo: number
+  data_inicio: string
+  data_fim: string | null
+  status: 'ativa' | 'pausada' | 'encerrada'
+  created_at: string
 }
 
 /** Escopo de edição de uma parcela. */

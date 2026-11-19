@@ -3,7 +3,8 @@ export type IconName =
   | 'arrow-down-left' | 'arrow-up-right' | 'chevron-left'
   | 'chevron-right' | 'receipt' | 'pencil' | 'trash' | 'plus'
   | 'layers' | 'check' | 'x' | 'undo' | 'alert' | 'arrow-left'
-  | 'calendar' | 'clock'
+  | 'calendar' | 'clock' | 'repeat' | 'pause' | 'play' | 'stop'
+  | 'more' | 'credit-card'
 
 export default function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const common = {
@@ -57,6 +58,18 @@ export default function Icon({ name, size = 20 }: { name: IconName; size?: numbe
       return <svg {...common}><path d="M19 12H5M11 18l-6-6 6-6" /></svg>
     case 'calendar':
       return <svg {...common}><rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
+    case 'repeat':
+      return <svg {...common}><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></svg>
+    case 'pause':
+      return <svg {...common}><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+    case 'play':
+      return <svg {...common}><path d="M7 4.5v15l12-7.5-12-7.5Z" /></svg>
+    case 'stop':
+      return <svg {...common}><rect x="5.5" y="5.5" width="13" height="13" rx="2" /></svg>
+    case 'more':
+      return <svg {...common}><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></svg>
+    case 'credit-card':
+      return <svg {...common}><rect x="2.5" y="5" width="19" height="14" rx="2.5" /><path d="M2.5 10h19M6.5 15h4" /></svg>
     case 'clock':
       return <svg {...common}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
   }

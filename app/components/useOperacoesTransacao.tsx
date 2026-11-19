@@ -2,6 +2,8 @@
 
 import { useCallback, useState, type ReactNode } from 'react'
 import {
+  alterarStatusRecorrencia,
+  cancelarParcelasFuturas,
   definirPagamento,
   excluirParcela,
   excluirParcelamento,
@@ -18,6 +20,7 @@ export interface AlvoOperacao {
   numero_parcela: number | null
   status_pagamento: StatusPagamento
   pago_em: string | null
+  recorrencia_id?: string | null
 }
 
 interface OpcoesParcelamento {
@@ -30,6 +33,7 @@ type Dialogo =
   | { tipo: 'excluir'; alvo: AlvoOperacao; opcoes: OpcoesParcelamento }
   | { tipo: 'excluir-parcelamento'; parcelamentoId: string; nome: string; opcoes: OpcoesParcelamento }
   | { tipo: 'desfazer-pagamento'; alvo: AlvoOperacao }
+  | { tipo: 'cancelar-futuras'; parcelamentoId: string; nome: string; quantidade: number }
 
 export function formatarDataPagamento(iso: string) {
   return new Date(iso).toLocaleDateString('pt-BR', {
@@ -129,6 +133,14 @@ export function useOperacoesTransacao({
     []
   )
 
+  /** Cancela só as parcelas pendentes de meses futuros (com confirmação). */
+  const solicitarCancelamentoFuturas = useCallback(
+    (parcelamentoId: string, nome: string, quantidade: number) => {
+      setDialogo({ tipo: 'cancelar-futuras', parcelamentoId, nome, quantidade })
+    },
+    []
+  )
+
   let titulo = ''
   let descricao: ReactNode = null
   let acoes: AcaoDialogo[] = []
@@ -185,6 +197,29 @@ export function useOperacoesTransacao({
           onClick: () => void executar(() => excluirParcelamento(parcelamentoId)),
         },
       ]
+    } else if (alvo.recorrencia_id) {
+      const recorrenciaId = alvo.recorrencia_id
+
+      titulo = 'Excluir ocorrência'
+      descricao = (
+        <>
+          <strong>{alvo.nome}</strong> é uma conta recorrente. O que deseja fazer?
+        </>
+      )
+      acoes = [
+        {
+          label: 'Excluir só esta ocorrência',
+          detalhe: 'As próximas continuam sendo geradas normalmente.',
+          variante: 'neutra',
+          onClick: () => void executar(() => excluirTransacao(alvo.id)),
+        },
+        {
+          label: 'Encerrar a recorrência',
+          detalhe: 'Remove as próximas pendentes e para de gerar. O histórico é mantido.',
+          variante: 'perigo',
+          onClick: () => void executar(() => alterarStatusRecorrencia(recorrenciaId, 'encerrar')),
+        },
+      ]
     } else {
       titulo = 'Excluir transação?'
       descricao = (
@@ -228,6 +263,25 @@ export function useOperacoesTransacao({
     ]
   }
 
+  if (dialogo?.tipo === 'cancelar-futuras') {
+    const { parcelamentoId, nome, quantidade } = dialogo
+
+    titulo = 'Cancelar parcelas futuras?'
+    descricao = (
+      <>
+        {quantidade} {quantidade === 1 ? 'parcela pendente' : 'parcelas pendentes'} de <strong>{nome}</strong> após o mês
+        atual {quantidade === 1 ? 'será removida' : 'serão removidas'}. Parcelas pagas, do mês atual e anteriores são mantidas.
+      </>
+    )
+    acoes = [
+      {
+        label: `Cancelar ${quantidade} ${quantidade === 1 ? 'parcela' : 'parcelas'}`,
+        variante: 'perigo',
+        onClick: () => void executar(() => cancelarParcelasFuturas(parcelamentoId)),
+      },
+    ]
+  }
+
   const elemento = (
     <ConfirmDialog
       aberto={!!dialogo}
@@ -243,6 +297,7 @@ export function useOperacoesTransacao({
     alternarPagamento,
     solicitarExclusao,
     solicitarExclusaoParcelamento,
+    solicitarCancelamentoFuturas,
     pagandoId,
     dialogo: elemento,
   }

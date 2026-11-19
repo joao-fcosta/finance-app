@@ -2,15 +2,15 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import TransactionModal from '@/app/components/TransactionModal';
+import { useApp } from '@/app/components/AppShell';
 import Icon from '@/app/components/Icon';
-import Toast, { useToast } from '@/app/components/Toast';
 import { formatarDataPagamento, useOperacoesTransacao } from '@/app/components/useOperacoesTransacao';
 import { buscarTransacoes } from '@/app/actions';
 import { adicionarMeses, formatarMes, mesCorrente, normalizarMes } from '@/app/lib/meses';
 import { formatarCentavos, reaisParaCentavos } from '@/app/lib/money';
 import { situacaoParcela } from '@/app/lib/parcelamentos';
 import BadgeSituacao from '@/app/components/BadgeSituacao';
+import { formatarDataCurta } from '@/app/lib/datas';
 import { nomeCategoria, type TipoTransacao, type Transacao } from '@/app/lib/types';
 
 function CategoryProgress({
@@ -76,12 +76,15 @@ function LinhaTransacao({
 }) {
   const receita = transacao.tipo === 'receita';
   const ehParcela = !!transacao.parcelamento_id;
-  const situacao = ehParcela ? situacaoParcela(transacao, mesHoje) : null;
+  const ehRecorrente = !!transacao.recorrencia_id;
   const paga = transacao.status_pagamento === 'pago';
+  // Parcelas e recorrentes mostram sempre a situação; avulsas, só quando pagas.
+  const situacao = ehParcela || ehRecorrente || paga ? situacaoParcela(transacao, mesHoje) : null;
 
   const detalhes = [
     receita ? null : nomeCategoria(transacao.categoria_id) || 'Despesa',
-    transacao.valor_real !== null ? 'Valor real' : 'Valor previsto',
+    ehRecorrente ? 'Recorrente' : null,
+    transacao.data_vencimento ? `vence ${formatarDataCurta(transacao.data_vencimento)}` : null,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -93,7 +96,7 @@ function LinhaTransacao({
             : 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
         }`}
       >
-        <Icon name={ehParcela ? 'layers' : receita ? 'arrow-down-left' : 'arrow-up-right'} size={18} />
+        <Icon name={ehParcela ? 'layers' : ehRecorrente ? 'repeat' : receita ? 'arrow-down-left' : 'arrow-up-right'} size={18} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{transacao.nome}</p>
@@ -110,7 +113,7 @@ function LinhaTransacao({
           {receita ? '+' : '−'}{formatarCentavos(valorCentavos(transacao))}
         </p>
         <div className="flex items-center gap-1">
-          {ehParcela && (
+          {!receita && (
             <button
               type="button"
               onClick={onPagamento}
@@ -139,24 +142,19 @@ function LinhaTransacao({
   );
 }
 
-interface EstadoModal {
-  tipo: TipoTransacao;
-  transacao: Transacao | null;
-}
-
 export default function Dashboard() {
-  const [modal, setModal] = useState<EstadoModal | null>(null);
-  const [mesAtual, setMesAtual] = useState(() => mesCorrente());
+  const app = useApp();
+  const { mostrar, versaoDados, notificarAlteracao, setMesSelecionado } = app;
+  const [mesAtual, setMesAtual] = useState(() => app.mesSelecionado);
   const [transacoes, setTransacoes] = useState<Transacao[]>([]);
   const [loading, setLoading] = useState(true);
   const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
   const [versao, setVersao] = useState(0);
   const seletorMesRef = useRef<HTMLInputElement>(null);
 
-  const { toast, mostrar, fechar } = useToast();
   const recarregar = useCallback(() => setVersao((v) => v + 1), []);
 
-  const operacoes = useOperacoesTransacao({ onConcluido: recarregar, mostrarMensagem: mostrar });
+  const operacoes = useOperacoesTransacao({ onConcluido: notificarAlteracao, mostrarMensagem: mostrar });
 
   const mesHoje = mesCorrente();
 
@@ -184,16 +182,21 @@ export default function Dashboard() {
     return () => {
       cancelado = true;
     };
-  }, [mesAtual, versao]);
+  }, [mesAtual, versao, versaoDados]);
 
   const irParaMes = (mes: string) => {
     if (mes === mesAtual) return;
     setLoading(true);
     setMesAtual(mes);
+    setMesSelecionado(mes);
   };
 
-  const abrirModal = (tipo: TipoTransacao, transacao: Transacao | null = null) => {
-    setModal({ tipo, transacao });
+  const abrirModal = (tipo: TipoTransacao, transacao: Transacao) => {
+    app.abrirLancamento({
+      tipo,
+      transacao,
+      totalParcelas: transacao.parcelamento_id ? totalDoNome(transacao.nome) : undefined,
+    });
   };
 
   /*
@@ -267,7 +270,7 @@ export default function Dashboard() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 pb-28 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <main>
       <div className="mx-auto w-full max-w-lg px-4 pb-8 pt-5 sm:px-5">
         <header className="mb-6 flex items-center justify-between gap-3">
           <div>
@@ -281,17 +284,8 @@ export default function Dashboard() {
               Sua vida financeira em ordem.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/parcelamentos"
-              className="flex h-10 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              <Icon name="layers" size={16} />
-              Parcelamentos
-            </Link>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 dark:border-slate-800 dark:bg-slate-900">
-              <Icon name="user" size={18} />
-            </div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+            <Icon name="user" size={18} />
           </div>
         </header>
 
@@ -494,44 +488,7 @@ export default function Dashboard() {
         </section>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 px-4 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/95">
-        <div className="mx-auto flex max-w-lg gap-3">
-          <button
-            type="button"
-            onClick={() => abrirModal('receita')}
-            className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.98]"
-          >
-            <Icon name="plus" size={18} />
-            Nova receita
-          </button>
-          <button
-            type="button"
-            onClick={() => abrirModal('despesa')}
-            className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-rose-600 text-sm font-bold text-white shadow-sm transition hover:bg-rose-700 active:scale-[0.98]"
-          >
-            <Icon name="plus" size={18} />
-            Nova despesa
-          </button>
-        </div>
-      </div>
-
-      {modal && (
-        <TransactionModal
-          onClose={() => setModal(null)}
-          onSalvo={(mensagem) => {
-            setModal(null);
-            mostrar(mensagem);
-            recarregar();
-          }}
-          tipo={modal.tipo}
-          mesAtual={mesAtual}
-          transacaoParaEditar={modal.transacao}
-          totalParcelas={modal.transacao ? totalDoNome(modal.transacao.nome) : undefined}
-        />
-      )}
-
       {operacoes.dialogo}
-      <Toast toast={toast} onFechar={fechar} />
     </main>
   );
 }
