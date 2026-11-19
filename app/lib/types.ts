@@ -30,7 +30,64 @@ export interface Transacao {
   recorrencia_id: string | null
   /** Data de vencimento "YYYY-MM-DD" (ocorrências de recorrências). */
   data_vencimento: string | null
+  /** FASE 3: forma de pagamento e vínculo com cartão/fatura. */
+  forma_pagamento: FormaPagamentoTransacao | null
+  cartao_id: string | null
+  fatura_id: string | null
+  data_compra: string | null
   created_at: string
+}
+
+export type FormaPagamentoTransacao = 'dinheiro' | 'pix' | 'debito' | 'credito'
+
+export interface Cartao {
+  id: string
+  nome: string
+  bandeira: string | null
+  limite: number
+  dia_fechamento: number
+  dia_vencimento: number
+  ativo: boolean
+}
+
+export interface FaturaResumo {
+  id: string
+  cartao_id: string
+  mes_referencia: string
+  data_fechamento: string
+  data_vencimento: string
+  totalCentavos: number
+  pagoCentavos: number
+  quantidadeCompras: number
+}
+
+export interface CartaoComResumo extends Cartao {
+  comprasCentavos: number
+  pagamentosCentavos: number
+  faturas: FaturaResumo[]
+}
+
+export interface CompraFatura {
+  id: string
+  nome: string
+  valor_estimado: number
+  valor_real: number | null
+  categoria_id: number | null
+  data_compra: string | null
+  numero_parcela: number | null
+  parcelamento_id: string | null
+  recorrencia_id: string | null
+}
+
+export interface PagamentoFatura {
+  id: string
+  valor: number
+  data_pagamento: string
+}
+
+export interface FaturaDetalhada extends FaturaResumo {
+  compras: CompraFatura[]
+  pagamentos: PagamentoFatura[]
 }
 
 export interface Parcela {
@@ -68,6 +125,8 @@ export interface Recorrencia {
   data_inicio: string
   data_fim: string | null
   status: 'ativa' | 'pausada' | 'encerrada'
+  forma_pagamento?: FormaPagamentoTransacao | null
+  cartao_id?: string | null
   created_at: string
 }
 

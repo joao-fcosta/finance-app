@@ -12,11 +12,13 @@ import {
   useRef,
   useState,
 } from 'react'
+import { listarCartoes } from '@/app/actions'
 import Icon, { type IconName } from '@/app/components/Icon'
 import Toast, { useToast } from '@/app/components/Toast'
 import TransactionModal, { type ModoLancamento, type TransacaoEditavel } from '@/app/components/TransactionModal'
 import { mesCorrente } from '@/app/lib/meses'
-import type { TipoTransacao } from '@/app/lib/types'
+import type { FormaPagamento } from '@/app/lib/cartoes'
+import type { Cartao, TipoTransacao } from '@/app/lib/types'
 
 /*
  * Estrutura comum das telas autenticadas: navegação inferior, botão de
@@ -30,6 +32,8 @@ import type { TipoTransacao } from '@/app/lib/types'
 export interface OpcoesLancamento {
   tipo?: TipoTransacao
   modo?: ModoLancamento
+  formaPagamento?: FormaPagamento
+  cartaoId?: string
   transacao?: TransacaoEditavel | null
   totalParcelas?: number
   parcelasFuturasAfetadas?: number
@@ -45,6 +49,8 @@ interface ContextoApp {
   /** Mês visualizado no dashboard (padrão dos novos lançamentos). */
   mesSelecionado: string
   setMesSelecionado: (mes: string) => void
+  /** Cartões do usuário (vazio se a FASE 3 não estiver no banco). */
+  cartoes: Cartao[]
 }
 
 const Contexto = createContext<ContextoApp | null>(null)
@@ -65,6 +71,7 @@ const NAVEGACAO: ItemNavegacao[] = [
   { href: '/', rotulo: 'Início', icone: 'wallet' },
   { href: '/recorrencias', rotulo: 'Recorrentes', icone: 'repeat' },
   { href: '/parcelamentos', rotulo: 'Parcelas', icone: 'layers' },
+  { href: '/cartoes', rotulo: 'Cartões', icone: 'credit-card' },
 ]
 
 const OPCOES_RAPIDAS: { rotulo: string; detalhe: string; icone: IconName; opcoes: OpcoesLancamento; cor: string }[] = [
@@ -81,6 +88,13 @@ const OPCOES_RAPIDAS: { rotulo: string; detalhe: string; icone: IconName; opcoes
     icone: 'arrow-down-left',
     opcoes: { tipo: 'receita', modo: 'unica' },
     cor: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400',
+  },
+  {
+    rotulo: 'Compra no cartão',
+    detalhe: 'A fatura certa é escolhida sozinha',
+    icone: 'credit-card',
+    opcoes: { tipo: 'despesa', modo: 'unica', formaPagamento: 'credito' },
+    cor: 'bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-400',
   },
   {
     rotulo: 'Nova recorrência',
@@ -199,6 +213,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [menuAberto, setMenuAberto] = useState(false)
   const [formulario, setFormulario] = useState<EstadoFormulario | null>(null)
   const contadorFormulario = useRef(0)
+  const [cartoes, setCartoes] = useState<Cartao[]>([])
+
+  useEffect(() => {
+    let cancelado = false
+    listarCartoes()
+      .then((lista) => !cancelado && setCartoes(lista))
+      .catch((e) => console.error('Erro ao carregar cartões:', e))
+    return () => {
+      cancelado = true
+    }
+  }, [versaoDados])
 
   const notificarAlteracao = useCallback(() => setVersaoDados((v) => v + 1), [])
 
@@ -211,8 +236,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const fecharMenu = useCallback(() => setMenuAberto(false), [])
 
   const valor = useMemo<ContextoApp>(
-    () => ({ mostrar, abrirLancamento, notificarAlteracao, versaoDados, mesSelecionado, setMesSelecionado }),
-    [mostrar, abrirLancamento, notificarAlteracao, versaoDados, mesSelecionado]
+    () => ({ mostrar, abrirLancamento, notificarAlteracao, versaoDados, mesSelecionado, setMesSelecionado, cartoes }),
+    [mostrar, abrirLancamento, notificarAlteracao, versaoDados, mesSelecionado, cartoes]
   )
 
   return (
@@ -235,6 +260,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           }}
           tipo={formulario.transacao?.tipo ?? formulario.tipo ?? 'despesa'}
           modoInicial={formulario.modo}
+          formaInicial={formulario.formaPagamento}
+          cartaoInicial={formulario.cartaoId}
+          cartoes={cartoes}
           mesAtual={formulario.mes ?? mesSelecionado}
           transacaoParaEditar={formulario.transacao ?? null}
           totalParcelas={formulario.totalParcelas}

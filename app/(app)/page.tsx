@@ -62,6 +62,7 @@ function LinhaTransacao({
   ultima,
   mesHoje,
   pagando,
+  nomeCartao,
   onEditar,
   onExcluir,
   onPagamento,
@@ -70,6 +71,7 @@ function LinhaTransacao({
   ultima: boolean;
   mesHoje: string;
   pagando: boolean;
+  nomeCartao?: string;
   onEditar: () => void;
   onExcluir: () => void;
   onPagamento: () => void;
@@ -77,14 +79,17 @@ function LinhaTransacao({
   const receita = transacao.tipo === 'receita';
   const ehParcela = !!transacao.parcelamento_id;
   const ehRecorrente = !!transacao.recorrencia_id;
+  // Compra no crédito é quitada pela fatura, não individualmente.
+  const noCartao = !!transacao.fatura_id;
   const paga = transacao.status_pagamento === 'pago';
   // Parcelas e recorrentes mostram sempre a situação; avulsas, só quando pagas.
-  const situacao = ehParcela || ehRecorrente || paga ? situacaoParcela(transacao, mesHoje) : null;
+  const situacao = !noCartao && (ehParcela || ehRecorrente || paga) ? situacaoParcela(transacao, mesHoje) : null;
 
   const detalhes = [
     receita ? null : nomeCategoria(transacao.categoria_id) || 'Despesa',
+    noCartao ? (nomeCartao ? `Cartão ${nomeCartao}` : 'Cartão') : null,
     ehRecorrente ? 'Recorrente' : null,
-    transacao.data_vencimento ? `vence ${formatarDataCurta(transacao.data_vencimento)}` : null,
+    !noCartao && transacao.data_vencimento ? `vence ${formatarDataCurta(transacao.data_vencimento)}` : null,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -96,7 +101,7 @@ function LinhaTransacao({
             : 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
         }`}
       >
-        <Icon name={ehParcela ? 'layers' : ehRecorrente ? 'repeat' : receita ? 'arrow-down-left' : 'arrow-up-right'} size={18} />
+        <Icon name={noCartao ? 'credit-card' : ehParcela ? 'layers' : ehRecorrente ? 'repeat' : receita ? 'arrow-down-left' : 'arrow-up-right'} size={18} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{transacao.nome}</p>
@@ -113,7 +118,7 @@ function LinhaTransacao({
           {receita ? '+' : '−'}{formatarCentavos(valorCentavos(transacao))}
         </p>
         <div className="flex items-center gap-1">
-          {!receita && (
+          {!receita && !noCartao && (
             <button
               type="button"
               onClick={onPagamento}
@@ -262,6 +267,7 @@ export default function Dashboard() {
         ultima={index === lista.length - 1}
         mesHoje={mesHoje}
         pagando={operacoes.pagandoId === transacao.id}
+        nomeCartao={transacao.cartao_id ? app.cartoes.find((c) => c.id === transacao.cartao_id)?.nome : undefined}
         onEditar={() => abrirModal(transacao.tipo, transacao)}
         onExcluir={() => operacoes.solicitarExclusao(transacao, { totalParcelas: totalDoNome(transacao.nome) })}
         onPagamento={() => operacoes.alternarPagamento(transacao)}

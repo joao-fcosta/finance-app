@@ -1,9 +1,10 @@
 'use client'
 
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { adicionarTransacao, atualizarTransacao, criarRecorrencia } from '@/app/actions'
+import { adicionarTransacao, atualizarTransacao, criarRecorrencia, registrarCompraCartao } from '@/app/actions'
 import Icon from '@/app/components/Icon'
-import { dataNoMes, dataValida, formatarDataCurta, hoje, partes } from '@/app/lib/datas'
+import { FORMAS_PAGAMENTO, FormaPagamento, ciclosDasParcelas } from '@/app/lib/cartoes'
+import { dataNoMes, dataValida, formatarData, formatarDataCurta, hoje, partes } from '@/app/lib/datas'
 import { adicionarMeses, formatarMesCurto, normalizarMes } from '@/app/lib/meses'
 import { FREQUENCIAS, Frequencia, descreverFrequencia, ocorrenciasEntre } from '@/app/lib/recorrencias'
 import {
@@ -15,6 +16,7 @@ import {
 } from '@/app/lib/money'
 import {
   CATEGORIAS,
+  Cartao,
   EscopoEdicao,
   StatusPagamento,
   TipoTransacao,
@@ -33,6 +35,8 @@ export interface TransacaoEditavel {
   status_pagamento: StatusPagamento
   recorrencia_id?: string | null
   data_vencimento?: string | null
+  fatura_id?: string | null
+  cartao_id?: string | null
 }
 
 /** Como a nova transação se repete. */
@@ -45,6 +49,10 @@ interface TransactionModalProps {
   tipo: TipoTransacao
   /** Modo inicial ao criar (ex.: "Nova recorrência" abre em 'recorrente'). */
   modoInicial?: ModoLancamento
+  formaInicial?: FormaPagamento
+  cartaoInicial?: string
+  /** Cartões do usuário (para compras no crédito). */
+  cartoes?: Cartao[]
   mesAtual: string
   transacaoParaEditar?: TransacaoEditavel | null
   /** Total de parcelas do parcelamento (apenas para exibição). */
@@ -53,7 +61,7 @@ interface TransactionModalProps {
   parcelasFuturasAfetadas?: number
 }
 
-type Campo = 'nome' | 'valor' | 'mes' | 'categoria' | 'parcelas' | 'dataInicio' | 'dataFim' | 'intervalo'
+type Campo = 'nome' | 'valor' | 'mes' | 'categoria' | 'parcelas' | 'dataInicio' | 'dataFim' | 'intervalo' | 'cartao' | 'dataCompra'
 type Erros = Partial<Record<Campo, string>>
 
 const MIN_PARCELAS = 2
@@ -94,6 +102,9 @@ export default function TransactionModal({
   onSalvo,
   tipo: tipoInicial,
   modoInicial = 'unica',
+  formaInicial,
+  cartaoInicial,
+  cartoes = [],
   mesAtual,
   transacaoParaEditar = null,
   totalParcelas,
@@ -121,6 +132,10 @@ export default function TransactionModal({
   const [dataInicio, setDataInicio] = useState(() => dataInicialSugerida(mesAtual))
   const [temFim, setTemFim] = useState(false)
   const [dataFim, setDataFim] = useState('')
+  const cartoesAtivos = cartoes.filter((c) => c.ativo)
+  const [forma, setForma] = useState<FormaPagamento | null>(formaInicial ?? null)
+  const [cartaoId, setCartaoId] = useState<string>(cartaoInicial ?? cartoesAtivos[0]?.id ?? '')
+  const [dataCompra, setDataCompra] = useState(() => dataInicialSugerida(mesAtual))
   const [parcelasTexto, setParcelasTexto] = useState('2')
   const [escopo, setEscopo] = useState<EscopoEdicao>('unica')
   const [erros, setErros] = useState<Erros>({})
@@ -140,7 +155,19 @@ export default function TransactionModal({
   const parcelado = modo === 'parcelada' && podeParcelar
   const recorrente = modo === 'recorrente' && !modoEdicao
   const intervalo = Number(intervaloTexto)
+  const credito = ehDespesa && !modoEdicao && forma === 'credito'
+  const cartaoSelecionado = cartoesAtivos.find((c) => c.id === cartaoId) ?? null
+  const compraNoCartaoEditada = !!edicao?.fatura_id
+  const cartaoDaEdicao = edicao?.cartao_id ? cartoes.find((c) => c.id === edicao.cartao_id) ?? null : null
+
   const quantidadeParcelas = Number(parcelasTexto)
+  /* Fatura em que a compra (ou cada parcela) vai entrar. */
+  const previaFatura = (() => {
+    if (!credito || recorrente || !cartaoSelecionado || !dataValida(dataCompra)) return null
+    const qtd = parcelado && Number.isInteger(quantidadeParcelas) && quantidadeParcelas >= 2 ? Math.min(quantidadeParcelas, MAX_PARCELAS) : 1
+    const ciclos = ciclosDasParcelas(cartaoSelecionado, dataCompra, qtd)
+    return { primeira: ciclos[0], ultima: ciclos[ciclos.length - 1], quantidade: qtd }
+  })()
   // Parcela paga: valor e mês só mudam depois de desfazer o pagamento.
   const valorEMesBloqueados = parcelaPaga
 
@@ -223,8 +250,14 @@ export default function TransactionModal({
           novos.dataFim = 'A data final deve ser depois da primeira ocorrência.'
         }
       }
+    } else if (credito) {
+      if (!dataValida(dataCompra)) novos.dataCompra = 'Informe a data da compra.'
     } else if (!normalizarMes(mes)) {
       novos.mes = 'Escolha um mês válido.'
+    }
+
+    if (credito && !cartaoSelecionado) {
+      novos.cartao = cartoesAtivos.length ? 'Escolha o cartão.' : 'Cadastre um cartão em Cartões para lançar no crédito.'
     }
 
     if (ehDespesa && !CATEGORIAS.some((c) => c.id === categoriaId)) {
@@ -253,6 +286,7 @@ export default function TransactionModal({
     else if (lista.dataInicio) document.getElementById('campo-data-inicio')?.focus()
     else if (lista.intervalo) document.getElementById('campo-intervalo')?.focus()
     else if (lista.dataFim) document.getElementById('campo-data-fim')?.focus()
+    else if (lista.dataCompra) document.getElementById('campo-data-compra')?.focus()
     else if (lista.parcelas) parcelasRef.current?.focus()
   }
 
@@ -282,15 +316,27 @@ export default function TransactionModal({
                 dataInicio,
                 dataFim: temFim ? dataFim : null,
                 mesVisualizado: mesAtual,
+                formaPagamento: ehDespesa ? forma : null,
+                cartaoId: credito ? cartaoId : null,
               })
-            : await adicionarTransacao({
-                nome,
-                valorCentavos,
-                mesReferencia: mes,
-                tipo,
-                categoriaId: ehDespesa ? categoriaId : undefined,
-                parcelas: parcelado ? quantidadeParcelas : 1,
-              })
+            : credito
+              ? await registrarCompraCartao({
+                  cartaoId,
+                  nome,
+                  valorCentavos,
+                  categoriaId,
+                  dataCompra,
+                  parcelas: parcelado ? quantidadeParcelas : 1,
+                })
+              : await adicionarTransacao({
+                  nome,
+                  valorCentavos,
+                  mesReferencia: mes,
+                  tipo,
+                  categoriaId: ehDespesa ? categoriaId : undefined,
+                  parcelas: parcelado ? quantidadeParcelas : 1,
+                  formaPagamento: ehDespesa && forma && forma !== 'credito' ? forma : null,
+                })
 
       if (!resultado.ok) {
         // Mantém tudo o que foi preenchido para o usuário corrigir.
@@ -353,7 +399,9 @@ export default function TransactionModal({
     ? 'Salvando...'
     : modoEdicao
       ? 'Salvar alterações'
-      : parcelado
+      : credito && !recorrente
+        ? 'Lançar no cartão'
+        : parcelado
         ? 'Criar parcelamento'
         : recorrente
           ? 'Criar recorrência'
@@ -554,6 +602,125 @@ export default function TransactionModal({
               </fieldset>
             )}
 
+            {/* Forma de pagamento (despesas novas) */}
+            {ehDespesa && !modoEdicao && (
+              <fieldset>
+                <legend className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Pagamento <span className="font-normal text-slate-400">(opcional)</span>
+                </legend>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {FORMAS_PAGAMENTO.map((f) => {
+                    const ativo = forma === f.valor
+                    return (
+                      <button
+                        key={f.valor}
+                        type="button"
+                        aria-pressed={ativo}
+                        onClick={() => {
+                          setForma(ativo ? null : f.valor)
+                          limparErro('cartao')
+                        }}
+                        className={`flex min-h-10 items-center justify-center gap-1 rounded-xl border text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                          ativo
+                            ? f.valor === 'credito'
+                              ? 'border-sky-500 bg-sky-50 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300'
+                              : 'border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                            : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        {f.valor === 'credito' && <Icon name="credit-card" size={14} />}
+                        {f.rotulo}
+                      </button>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            )}
+
+            {/* Cartão (crédito) */}
+            {credito && (
+              <div className="space-y-3 rounded-2xl border border-sky-200 bg-sky-50/40 p-4 dark:border-sky-900/60 dark:bg-sky-950/20">
+                {cartoesAtivos.length === 0 ? (
+                  <p className="text-sm text-slate-700 dark:text-slate-200">
+                    Nenhum cartão ativo.{' '}
+                    <a href="/cartoes" className="font-bold text-sky-700 underline dark:text-sky-400">Cadastre um cartão</a>{' '}
+                    para lançar compras no crédito.
+                  </p>
+                ) : (
+                  <fieldset>
+                    <legend className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">Cartão</legend>
+                    <div className="flex flex-wrap gap-2">
+                      {cartoesAtivos.map((c) => (
+                        <label
+                          key={c.id}
+                          className={`flex min-h-10 cursor-pointer items-center gap-1.5 rounded-xl border px-3 text-sm font-bold transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-emerald-500 ${
+                            cartaoId === c.id
+                              ? 'border-sky-500 bg-white text-sky-800 shadow-sm dark:bg-slate-950 dark:text-sky-300'
+                              : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="cartao"
+                            checked={cartaoId === c.id}
+                            onChange={() => {
+                              setCartaoId(c.id)
+                              limparErro('cartao')
+                            }}
+                            className="sr-only"
+                          />
+                          <Icon name="credit-card" size={15} />
+                          {c.nome}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
+                {erros.cartao && <p className="text-xs font-medium text-rose-600 dark:text-rose-400">{erros.cartao}</p>}
+
+                {!recorrente && (
+                  <div>
+                    <label htmlFor="campo-data-compra" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      Data da compra
+                    </label>
+                    <input
+                      id="campo-data-compra"
+                      type="date"
+                      value={dataCompra}
+                      onChange={(e) => {
+                        setDataCompra(e.target.value)
+                        limparErro('dataCompra')
+                      }}
+                      aria-invalid={!!erros.dataCompra}
+                      className={`${classeCampo} ${bordaCampo(erros.dataCompra)}`}
+                    />
+                    {erros.dataCompra && <p className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">{erros.dataCompra}</p>}
+                  </div>
+                )}
+
+                {previaFatura && (
+                  <p aria-live="polite" className="rounded-xl bg-white px-3 py-2.5 text-xs text-slate-600 dark:bg-slate-950 dark:text-slate-300">
+                    {previaFatura.quantidade > 1 ? (
+                      <>
+                        Parcelas nas faturas de <strong className="capitalize">{formatarMesCurto(previaFatura.primeira.mes_referencia)}</strong> a{' '}
+                        <strong className="capitalize">{formatarMesCurto(previaFatura.ultima.mes_referencia)}</strong>.
+                      </>
+                    ) : (
+                      <>
+                        Entra na fatura de <strong className="capitalize">{formatarMesCurto(previaFatura.primeira.mes_referencia)}</strong>{' '}
+                        (fecha {formatarDataCurta(previaFatura.primeira.data_fechamento)}, vence {formatarData(previaFatura.primeira.data_vencimento)}).
+                      </>
+                    )}
+                  </p>
+                )}
+                {credito && recorrente && cartaoSelecionado && (
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    Cada cobrança entra na fatura correspondente à sua data.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Repetição (somente ao criar) */}
             {!modoEdicao && (
               <fieldset>
@@ -697,7 +864,7 @@ export default function TransactionModal({
             )}
 
             {/* Mês */}
-            {!recorrente && (
+            {!recorrente && !credito && (
             <div>
               <label htmlFor="campo-mes" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
                 {parcelado ? 'Mês da 1ª parcela' : 'Mês de referência'}
@@ -711,13 +878,23 @@ export default function TransactionModal({
                   setMes(e.target.value)
                   limparErro('mes')
                 }}
-                disabled={valorEMesBloqueados}
+                disabled={valorEMesBloqueados || compraNoCartaoEditada}
                 aria-invalid={!!erros.mes}
                 aria-describedby={erros.mes ? 'erro-mes' : undefined}
                 className={`${classeCampo} ${bordaCampo(erros.mes)}`}
               />
               {erros.mes && <p id="erro-mes" className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">{erros.mes}</p>}
             </div>
+            )}
+
+            {compraNoCartaoEditada && (
+              <p className="flex items-start gap-2 rounded-2xl bg-sky-50 px-4 py-3 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+                <span className="mt-0.5 shrink-0"><Icon name="credit-card" size={14} /></span>
+                <span>
+                  Compra no cartão{cartaoDaEdicao ? ` ${cartaoDaEdicao.nome}` : ''}. O mês é o da fatura, definido pela data da
+                  compra. Para mudar de fatura, exclua e lance novamente.
+                </span>
+              </p>
             )}
 
             {ehOcorrencia && (
@@ -808,7 +985,7 @@ export default function TransactionModal({
                       {previa ? (
                         <>
                           <p className="font-bold text-slate-800 dark:text-slate-100">{previa.linhas.join(' + ')}</p>
-                          {previa.periodo && <p className="mt-0.5">{previa.periodo}</p>}
+                          {previa.periodo && !credito && <p className="mt-0.5">{previa.periodo}</p>}
                         </>
                       ) : (
                         <p>Informe o valor total para ver as parcelas.</p>
