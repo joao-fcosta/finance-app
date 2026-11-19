@@ -3,7 +3,18 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { DataISO, dataNoMes, dataValida, hoje, partes } from '@/app/lib/datas'
-import { normalizarMes } from '@/app/lib/meses'
+import { adicionarMeses, normalizarMes } from '@/app/lib/meses'
+import {
+  Compromisso,
+  FaturaPainel,
+  MesFuturo,
+  ResumoMes,
+  TransacaoPainel,
+  compromissosFuturos,
+  montarCompromissos,
+  proximosVencimentos,
+  resumirMes,
+} from '@/app/lib/painel'
 import { Frequencia, horizonteGeracao } from '@/app/lib/recorrencias'
 import { MAX_CENTAVOS, centavosParaReais, distribuirParcelas, formatarCentavos, reaisParaCentavos } from '@/app/lib/money'
 import type {
@@ -1231,4 +1242,105 @@ export async function listarCartoes(): Promise<Cartao[]> {
   }
 
   return (data ?? []) as unknown as Cartao[]
+}
+
+/*
+ * =====================================================
+ * PAINEL (FASE 4)
+ * =====================================================
+ *
+ * Indicadores do mês e compromissos, calculados no servidor a partir das
+ * mesmas linhas (transacoes e faturas), sem contagem duplicada.
+ */
+
+export interface Painel {
+  mes: string
+  hoje: string
+  transacoes: Transacao[]
+  resumo: ResumoMes
+  faturasDoMes: FaturaPainel[]
+  proximos: Compromisso[]
+  futuros: MesFuturo[]
+}
+
+interface LinhaFaturaPainel {
+  id: string
+  cartao_id: string
+  mes_referencia: string
+  data_vencimento: string
+  cartao: { nome: string } | null
+  compras: { valor_estimado: number; valor_real: number | null }[] | null
+  pagamentos: { valor: number }[] | null
+}
+
+const CAMPOS_PENDENTES =
+  'id, nome, tipo, valor_estimado, valor_real, mes_referencia, categoria_id, status_pagamento, data_vencimento, fatura_id, recorrencia_id, parcelamento_id'
+
+export async function buscarPainel(mesReferencia: string): Promise<Painel> {
+  const mes = normalizarMes(mesReferencia)
+  if (!mes) throw new Error('Mês de referência inválido.')
+
+  // Também gera as ocorrências recorrentes que faltam.
+  const transacoes = await buscarTransacoes(mes)
+  const { supabase, user } = await obterContexto()
+
+  const dataHoje = hoje()
+  const mesHoje = dataHoje.slice(0, 7)
+  const inicio = [adicionarMeses(mesHoje, -3), mes].sort()[0]
+  const fim = [adicionarMeses(mesHoje, 6), mes].sort()[1]
+
+  const [faturasConsulta, pendentesConsulta] = await Promise.all([
+    supabase
+      .from('faturas')
+      .select(`
+        id, cartao_id, mes_referencia, data_vencimento,
+        cartao:cartoes!faturas_cartao_usuario_fkey (nome),
+        compras:transacoes!transacoes_fatura_usuario_fkey (valor_estimado, valor_real),
+        pagamentos:pagamentos_fatura (valor)
+      `)
+      .eq('usuario_id', user.id)
+      .gte('mes_referencia', inicio)
+      .lte('mes_referencia', fim),
+    supabase
+      .from('transacoes')
+      .select(CAMPOS_PENDENTES)
+      .eq('usuario_id', user.id)
+      .eq('tipo', 'despesa')
+      .is('fatura_id', null)
+      .or('status_pagamento.is.null,status_pagamento.eq.pendente')
+      .gte('mes_referencia', adicionarMeses(mesHoje, -3))
+      .lte('mes_referencia', adicionarMeses(mesHoje, 6)),
+  ])
+
+  // Banco sem FASE 3: segue sem faturas/compromissos (o resto funciona).
+  if (faturasConsulta.error && !colunaInexistente(faturasConsulta.error)) {
+    console.error('Erro ao buscar faturas do painel:', faturasConsulta.error)
+  }
+  if (pendentesConsulta.error && !colunaInexistente(pendentesConsulta.error)) {
+    console.error('Erro ao buscar compromissos do painel:', pendentesConsulta.error)
+  }
+
+  const faturas: FaturaPainel[] = ((faturasConsulta.data ?? []) as unknown as LinhaFaturaPainel[]).map((f) => ({
+    id: f.id,
+    cartao_id: f.cartao_id,
+    cartao_nome: f.cartao?.nome ?? 'Cartão',
+    mes_referencia: f.mes_referencia,
+    data_vencimento: f.data_vencimento,
+    totalCentavos: somarReaisEmCentavos((f.compras ?? []).map((c) => c.valor_real ?? c.valor_estimado)),
+    pagoCentavos: somarReaisEmCentavos((f.pagamentos ?? []).map((p) => p.valor)),
+  }))
+
+  const faturasDoMes = faturas.filter((f) => f.mes_referencia === mes && (f.totalCentavos > 0 || f.pagoCentavos > 0))
+  const pendentes = (pendentesConsulta.data ?? []) as unknown as TransacaoPainel[]
+  const compromissos = montarCompromissos(pendentes, faturas, dataHoje)
+
+  return {
+    mes,
+    hoje: dataHoje,
+    transacoes,
+    resumo: resumirMes(transacoes, faturasDoMes),
+    faturasDoMes,
+    proximos: proximosVencimentos(compromissos, dataHoje).slice(0, 8),
+    futuros: compromissosFuturos(compromissos, mesHoje, 6),
+  }
 }
