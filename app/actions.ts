@@ -65,6 +65,8 @@ async function criarSupabase() {
  * usuário veria apenas um erro genérico.
  */
 
+type ClienteSupabase = Awaited<ReturnType<typeof criarSupabase>>
+
 export type Resultado<T = undefined> =
   | { ok: true; mensagem: string; dados?: T }
   | { ok: false; erro: string }
@@ -333,6 +335,18 @@ export async function adicionarTransacao(
       return { ok: false, erro: mensagemDoBanco(error, 'Não foi possível criar o parcelamento.') }
     }
 
+    // A RPC da FASE 1 não recebe a forma de pagamento; completa aqui.
+    if (formaPagamento && data) {
+      const { error: formaError } = await supabase
+        .from('transacoes')
+        .update({ forma_pagamento: formaPagamento })
+        .eq('parcelamento_id', data as string)
+        .eq('usuario_id', user.id)
+      if (formaError && !colunaInexistente(formaError)) {
+        console.error('Erro ao registrar a forma de pagamento do parcelamento:', formaError)
+      }
+    }
+
     return {
       ok: true,
       mensagem: `Parcelamento criado em ${quantidade} parcelas.`,
@@ -456,6 +470,14 @@ export async function atualizarTransacao(
  */
 export async function buscarTransacoes(mesReferencia: string): Promise<Transacao[]> {
   const { supabase, user } = await obterContexto()
+  return carregarTransacoesDoMes(supabase, user.id, mesReferencia)
+}
+
+async function carregarTransacoesDoMes(
+  supabase: ClienteSupabase,
+  usuarioId: string,
+  mesReferencia: string
+): Promise<Transacao[]> {
   const mes = normalizarMes(mesReferencia)
 
   if (!mes) {
@@ -468,7 +490,7 @@ export async function buscarTransacoes(mesReferencia: string): Promise<Transacao
     supabase
       .from('transacoes')
       .select(campos)
-      .eq('usuario_id', user.id)
+      .eq('usuario_id', usuarioId)
       .eq('mes_referencia', mes)
       .order('created_at', { ascending: false })
 
@@ -499,8 +521,6 @@ export async function buscarTransacoes(mesReferencia: string): Promise<Transacao
  * horizonte do mês consultado (idempotente: não duplica). Falhas aqui
  * não impedem a leitura dos dados já existentes.
  */
-type ClienteSupabase = Awaited<ReturnType<typeof criarSupabase>>
-
 async function garantirOcorrencias(supabase: ClienteSupabase, mes: string) {
   const { error } = await supabase.rpc('gerar_ocorrencias', {
     p_ate: horizonteGeracao(mes, hoje()),
@@ -1280,9 +1300,9 @@ export async function buscarPainel(mesReferencia: string): Promise<Painel> {
   const mes = normalizarMes(mesReferencia)
   if (!mes) throw new Error('Mês de referência inválido.')
 
-  // Também gera as ocorrências recorrentes que faltam.
-  const transacoes = await buscarTransacoes(mes)
   const { supabase, user } = await obterContexto()
+  // Também gera as ocorrências recorrentes que faltam.
+  const transacoes = await carregarTransacoesDoMes(supabase, user.id, mes)
 
   const dataHoje = hoje()
   const mesHoje = dataHoje.slice(0, 7)
